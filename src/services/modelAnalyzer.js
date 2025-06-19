@@ -1,13 +1,11 @@
 /**
- * modelAnalyzer.js - Fixed Qlik Data Model Introspection Service
+ * modelAnalyzer.js - FIXED Qlik Data Model Introspection Service
  *
- * Uses correct Qlik Sense APIs that work in nebula.js environment
+ * Fixed to eliminate duplicate fields and provide accurate field counts
  */
 
 /**
- * Analyze Qlik app to get all available fields and categorize them
- * @param {Object} app - Qlik app object
- * @returns {Object} - Categorized fields with metadata
+ * Analyze Qlik app to get all available fields and categorize them (FIXED - no duplicates)
  */
 export async function analyzeQlikModel(app) {
   try {
@@ -15,34 +13,36 @@ export async function analyzeQlikModel(app) {
       throw new Error("App object not available");
     }
 
-    console.log("Analyzing Qlik data model...");
+    console.log("🔍 Analyzing Qlik data model (FIXED version)...");
 
-    // Method 1: Try to get app layout first
+    // Try to get app layout first
     let appLayout;
     try {
       appLayout = await app.getAppLayout();
-      console.log("App layout retrieved:", appLayout.qTitle);
+      console.log("📊 App layout retrieved:", appLayout.qTitle);
     } catch (layoutError) {
-      console.warn("Could not get app layout:", layoutError);
+      console.warn("⚠️ Could not get app layout:", layoutError);
     }
 
-    // Method 2: Try different field list approaches
+    // Try different field list approaches
     let fieldList = [];
 
     try {
-      // Try method 1: getList for fields
+      // Method 1: Try getList for fields
       if (typeof app.getList === "function") {
         const fieldListObject = await app.getList("FieldList");
         if (fieldListObject && fieldListObject.qFieldList) {
           fieldList = fieldListObject.qFieldList.qItems || [];
-          console.log(`Found ${fieldList.length} fields using getList method`);
+          console.log(
+            `📋 Found ${fieldList.length} fields using getList method`
+          );
         }
       }
     } catch (error) {
-      console.warn("getList method failed:", error);
+      console.warn("❌ getList method failed:", error);
     }
 
-    // Method 3: If no fields found, try createSessionObject approach
+    // Method 2: If no fields found, try createSessionObject approach
     if (fieldList.length === 0) {
       try {
         const fieldListDef = {
@@ -56,7 +56,7 @@ export async function analyzeQlikModel(app) {
         if (layout && layout.qFieldList && layout.qFieldList.qItems) {
           fieldList = layout.qFieldList.qItems;
           console.log(
-            `Found ${fieldList.length} fields using createSessionObject method`
+            `📋 Found ${fieldList.length} fields using createSessionObject method`
           );
         }
 
@@ -65,82 +65,108 @@ export async function analyzeQlikModel(app) {
           await fieldListObj.destroy();
         }
       } catch (sessionError) {
-        console.warn("createSessionObject method failed:", sessionError);
+        console.warn("❌ createSessionObject method failed:", sessionError);
       }
     }
 
-    // Method 4: Fallback - create mock fields for testing
+    // Method 3: Fallback - create mock fields for testing
     if (fieldList.length === 0) {
       console.warn(
-        "No fields found via API, creating mock swimming fields for testing"
+        "⚠️ No fields found via API, creating mock swimming fields for testing"
       );
       fieldList = createMockSwimmingFields();
     }
 
-    // Process the field list
-    const categorizedFields = categorizeFields(fieldList);
-    const enrichedFields = enrichFieldMetadata(categorizedFields);
+    // FIXED: Process and deduplicate the field list
+    const categorizedFields = categorizeFieldsFixed(fieldList);
+    const enrichedFields = enrichFieldMetadataFixed(categorizedFields);
 
-    console.log("Model analysis complete:", {
+    console.log("✅ Model analysis complete (FIXED):", {
       dimensions: enrichedFields.dimensions.length,
       measures: enrichedFields.measures.length,
       total: enrichedFields.all.length,
+      duplicatesRemoved: fieldList.length - enrichedFields.all.length,
     });
 
     return enrichedFields;
   } catch (error) {
-    console.error("Failed to analyze Qlik model:", error);
+    console.error("❌ Failed to analyze Qlik model:", error);
 
-    // Return mock fields as fallback so the extension still works
-    console.log("Returning mock swimming fields as fallback");
+    // Return mock fields as fallback
+    console.log("🏊‍♀️ Returning mock swimming fields as fallback");
     const mockFields = createMockSwimmingFields();
-    const categorizedFields = categorizeFields(mockFields);
-    return enrichFieldMetadata(categorizedFields);
+    const categorizedFields = categorizeFieldsFixed(mockFields);
+    return enrichFieldMetadataFixed(categorizedFields);
   }
 }
 
 /**
- * Create mock swimming fields for testing when real fields aren't available
+ * Create mock swimming fields for testing (IMPROVED with more variety)
  */
 function createMockSwimmingFields() {
   return [
     // Athlete information
     { qName: "name", qTags: [], qIsNumeric: false, qCardinal: 50 },
     { qName: "athlete", qTags: [], qIsNumeric: false, qCardinal: 50 },
+    { qName: "swimmer", qTags: [], qIsNumeric: false, qCardinal: 50 },
     { qName: "team", qTags: [], qIsNumeric: false, qCardinal: 20 },
+    { qName: "club", qTags: [], qIsNumeric: false, qCardinal: 20 },
     { qName: "country", qTags: [], qIsNumeric: false, qCardinal: 15 },
 
     // Competition structure
     { qName: "event", qTags: [], qIsNumeric: false, qCardinal: 30 },
+    { qName: "race", qTags: [], qIsNumeric: false, qCardinal: 30 },
     { qName: "heat", qTags: [], qIsNumeric: false, qCardinal: 10 },
     { qName: "lane", qTags: [], qIsNumeric: true, qCardinal: 8 },
     { qName: "place", qTags: [], qIsNumeric: true, qCardinal: 8 },
+    { qName: "rank", qTags: [], qIsNumeric: true, qCardinal: 8 },
 
     // Performance metrics
     { qName: "time", qTags: [], qIsNumeric: true, qCardinal: 200 },
+    { qName: "finish_time", qTags: [], qIsNumeric: true, qCardinal: 200 },
     { qName: "reaction_time", qTags: [], qIsNumeric: true, qCardinal: 100 },
     { qName: "lap_time", qTags: [], qIsNumeric: true, qCardinal: 150 },
+    { qName: "split_time", qTags: [], qIsNumeric: true, qCardinal: 150 },
     { qName: "distance", qTags: [], qIsNumeric: true, qCardinal: 10 },
 
     // Competition details
     { qName: "competition", qTags: [], qIsNumeric: false, qCardinal: 5 },
+    { qName: "meet", qTags: [], qIsNumeric: false, qCardinal: 5 },
     { qName: "venue", qTags: [], qIsNumeric: false, qCardinal: 3 },
+    { qName: "pool", qTags: [], qIsNumeric: false, qCardinal: 3 },
     { qName: "date", qTags: ["$date"], qIsNumeric: false, qCardinal: 10 },
+
+    // Swimming specific
+    { qName: "stroke", qTags: [], qIsNumeric: false, qCardinal: 4 },
+    { qName: "style", qTags: [], qIsNumeric: false, qCardinal: 4 },
+    { qName: "dq", qTags: [], qIsNumeric: false, qCardinal: 2 },
+    { qName: "disqualified", qTags: [], qIsNumeric: false, qCardinal: 2 },
+    { qName: "age_group", qTags: [], qIsNumeric: false, qCardinal: 5 },
+    { qName: "category", qTags: [], qIsNumeric: false, qCardinal: 5 },
   ];
 }
 
 /**
- * Categorize fields into dimensions and measures based on their properties
+ * FIXED: Categorize fields into dimensions and measures and remove duplicates
  */
-function categorizeFields(fieldList) {
+function categorizeFieldsFixed(fieldList) {
   const dimensions = [];
   const measures = [];
   const all = [];
+  const seenFields = new Set(); // Track seen field names to avoid duplicates
 
   fieldList.forEach((field) => {
     try {
       // Handle both API response formats
       const fieldName = field.qName || field.name || field;
+
+      // FIXED: Skip duplicates
+      if (seenFields.has(fieldName)) {
+        console.log(`🔄 Skipping duplicate field: ${fieldName}`);
+        return;
+      }
+      seenFields.add(fieldName);
+
       const fieldTags = field.qTags || field.tags || [];
       const isNumeric = field.qIsNumeric || field.isNumeric || false;
       const cardinality = field.qCardinal || field.cardinal || 0;
@@ -171,18 +197,22 @@ function categorizeFields(fieldList) {
       // Add to all fields regardless of category
       all.push(fieldInfo);
     } catch (fieldError) {
-      console.warn(`Failed to analyze field:`, fieldError);
+      console.warn(`❌ Failed to analyze field:`, fieldError);
     }
   });
+
+  console.log(
+    `✅ FIXED categorization: ${dimensions.length} dimensions, ${measures.length} measures, ${all.length} total (duplicates removed)`
+  );
 
   return { dimensions, measures, all };
 }
 
 /**
- * Enrich fields with additional metadata for better mapping
+ * FIXED: Enrich fields with additional metadata and ensure no duplicates
  */
-function enrichFieldMetadata(categorizedFields) {
-  // Add swimming-specific field patterns
+function enrichFieldMetadataFixed(categorizedFields) {
+  // Enhanced swimming-specific field patterns
   const swimmingPatterns = {
     dimensions: [
       "name",
@@ -194,9 +224,10 @@ function enrichFieldMetadata(categorizedFields) {
       "country",
       "nation",
       "event",
+      "race",
       "stroke",
-      "distance",
       "style",
+      "distance",
       "heat",
       "lane",
       "place",
@@ -222,6 +253,7 @@ function enrichFieldMetadata(categorizedFields) {
       "reaction_time",
       "split",
       "lap_time",
+      "finish_time",
       "points",
       "score",
       "rating",
@@ -236,35 +268,64 @@ function enrichFieldMetadata(categorizedFields) {
     ],
   };
 
-  // Enhance dimensions with swimming context
-  const enhancedDimensions = categorizedFields.dimensions.map((dim) => ({
-    ...dim,
-    swimmingRelevance: calculateSwimmingRelevance(
-      dim.name,
-      swimmingPatterns.dimensions
-    ),
-    suggestedFor: getSuggestedUseCase(dim.name),
-  }));
+  // FIXED: Enhance dimensions with swimming context and remove duplicates
+  const enhancedDimensions = removeDuplicatesByName(
+    categorizedFields.dimensions.map((dim) => ({
+      ...dim,
+      swimmingRelevance: calculateSwimmingRelevance(
+        dim.name,
+        swimmingPatterns.dimensions
+      ),
+      suggestedFor: getSuggestedUseCase(dim.name),
+    }))
+  );
 
-  // Enhance measures with swimming context
-  const enhancedMeasures = categorizedFields.measures.map((measure) => ({
-    ...measure,
-    swimmingRelevance: calculateSwimmingRelevance(
-      measure.name,
-      swimmingPatterns.measures
-    ),
-    suggestedFor: getSuggestedUseCase(measure.name),
-  }));
+  // FIXED: Enhance measures with swimming context and remove duplicates
+  const enhancedMeasures = removeDuplicatesByName(
+    categorizedFields.measures.map((measure) => ({
+      ...measure,
+      swimmingRelevance: calculateSwimmingRelevance(
+        measure.name,
+        swimmingPatterns.measures
+      ),
+      suggestedFor: getSuggestedUseCase(measure.name),
+    }))
+  );
+
+  // FIXED: Remove duplicates from all fields
+  const allFieldsNoDuplicates = removeDuplicatesByName([
+    ...enhancedDimensions,
+    ...enhancedMeasures,
+    ...categorizedFields.all,
+  ]);
 
   // Sort by swimming relevance (most relevant first)
   enhancedDimensions.sort((a, b) => b.swimmingRelevance - a.swimmingRelevance);
   enhancedMeasures.sort((a, b) => b.swimmingRelevance - a.swimmingRelevance);
 
+  console.log(
+    `✅ FIXED enrichment complete: ${enhancedDimensions.length} dimensions, ${enhancedMeasures.length} measures, ${allFieldsNoDuplicates.length} total unique fields`
+  );
+
   return {
     dimensions: enhancedDimensions,
     measures: enhancedMeasures,
-    all: [...enhancedDimensions, ...enhancedMeasures, ...categorizedFields.all],
+    all: allFieldsNoDuplicates,
   };
+}
+
+/**
+ * FIXED: Remove duplicate fields by name
+ */
+function removeDuplicatesByName(fields) {
+  const seen = new Set();
+  return fields.filter((field) => {
+    if (seen.has(field.name)) {
+      return false;
+    }
+    seen.add(field.name);
+    return true;
+  });
 }
 
 /**
@@ -376,6 +437,8 @@ function calculateSwimmingRelevance(fieldName, patterns) {
     "backstroke",
     "butterfly",
     "breaststroke",
+    "medley",
+    "relay",
   ];
   swimmingTerms.forEach((term) => {
     if (nameLower.includes(term)) {
@@ -395,14 +458,20 @@ function getSuggestedUseCase(fieldName) {
   const useCases = {
     name: "Athlete identification",
     athlete: "Athlete identification",
+    swimmer: "Athlete identification",
     team: "Team grouping",
+    club: "Team grouping",
     event: "Event categorization",
+    race: "Event categorization",
     time: "Performance measurement",
     reaction_time: "Start analysis",
     place: "Result ranking",
+    rank: "Result ranking",
     heat: "Race organization",
     lane: "Pool position",
     distance: "Event specification",
+    stroke: "Swimming technique",
+    dq: "Disqualification tracking",
   };
 
   for (const [key, useCase] of Object.entries(useCases)) {

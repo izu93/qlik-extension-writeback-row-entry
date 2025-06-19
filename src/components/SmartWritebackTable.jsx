@@ -7,15 +7,15 @@ import { parseUploadedFile } from "../services/fileParser";
 import { generateMappingSuggestions } from "../services/mappingEngine";
 
 /**
- * SmartWritebackTable: Intelligent column mapping and writeback functionality
+ * SmartWritebackTable: Enhanced with actual file processing
  *
  * Flow:
- * 1. Upload file (Excel/CSV)
- * 2. Parse and analyze columns
+ * 1. Upload file (Excel/CSV) and trigger parsing
+ * 2. Parse and analyze columns with sample data
  * 3. Get Qlik data model fields
- * 4. Suggest intelligent mappings
- * 5. User reviews/adjusts mappings
- * 6. Generate dynamic table
+ * 4. Generate intelligent mapping suggestions
+ * 5. User reviews/adjusts mappings in ColumnMapper
+ * 6. Generate dynamic table from confirmed mappings
  * 7. Enable row-level editing and save
  */
 export default function SmartWritebackTable({
@@ -25,7 +25,7 @@ export default function SmartWritebackTable({
   selections,
 }) {
   // Application states
-  const [currentStep, setCurrentStep] = useState("upload"); // upload -> mapping -> table
+  const [currentStep, setCurrentStep] = useState("upload");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -72,52 +72,45 @@ export default function SmartWritebackTable({
   }, [app]);
 
   /**
-   * Handle file upload and parsing
+   * Handle file upload and processing
    */
   const handleFileUpload = async (file) => {
     try {
       setIsLoading(true);
       setError(null);
 
-      console.log("Parsing uploaded file:", file.name);
+      console.log("Starting file processing:", file.name);
 
-      // Parse the uploaded file
+      // Step 1: Parse the uploaded file
       const parsed = await parseUploadedFile(file);
+      console.log("File parsed successfully:", parsed);
 
-      // Generate intelligent mapping suggestions
+      // Step 2: Generate intelligent mapping suggestions
       const suggestions = generateMappingSuggestions(
         parsed.columns,
         qlikFields.all
       );
+      console.log("Mapping suggestions generated:", suggestions);
 
+      // Step 3: Store results and advance to mapping step
       setUploadedFile(file);
       setParsedData(parsed);
       setMappingSuggestions(suggestions);
 
-      // Auto-advance to mapping step if we have good suggestions
-      const autoMappedCount = Object.values(suggestions).filter(
+      // Step 4: Check if we can auto-advance
+      const highConfidenceCount = Object.values(suggestions).filter(
         (s) => s.confidence > 0.8
       ).length;
 
-      if (autoMappedCount >= parsed.columns.length * 0.7) {
-        console.log(
-          `Auto-mapped ${autoMappedCount}/${parsed.columns.length} columns with high confidence`
-        );
+      console.log(
+        `Generated ${highConfidenceCount} high-confidence mappings out of ${parsed.columns.length} columns`
+      );
 
-        // Pre-populate high-confidence mappings
-        const autoMappings = {};
-        Object.entries(suggestions).forEach(([col, suggestion]) => {
-          if (suggestion.confidence > 0.8) {
-            autoMappings[col] = suggestion.qlikField;
-          }
-        });
-        setColumnMappings(autoMappings);
-      }
-
+      // Always go to mapping step for user review
       setCurrentStep("mapping");
     } catch (err) {
-      console.error("File upload error:", err);
-      setError(`Failed to parse file: ${err.message}`);
+      console.error("File processing error:", err);
+      setError(`Failed to process file: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -131,11 +124,12 @@ export default function SmartWritebackTable({
       setIsLoading(true);
       setError(null);
 
+      console.log("Confirming mappings:", finalMappings);
       setColumnMappings(finalMappings);
 
-      // Generate hypercube definition from mappings
-      // This will be implemented in tableGenerator.js
-      console.log("Generating table with mappings:", finalMappings);
+      // TODO: Generate hypercube definition from mappings
+      // This will be implemented in Phase 3
+      console.log("Table generation will be implemented in Phase 3");
 
       setCurrentStep("table");
     } catch (err) {
@@ -160,8 +154,19 @@ export default function SmartWritebackTable({
     setError(null);
   };
 
-  // Loading state
-  if (isLoading && currentStep === "upload") {
+  /**
+   * Go back to previous step
+   */
+  const handleGoBack = () => {
+    if (currentStep === "mapping") {
+      setCurrentStep("upload");
+    } else if (currentStep === "table") {
+      setCurrentStep("mapping");
+    }
+  };
+
+  // Loading state during initialization
+  if (isLoading && currentStep === "upload" && qlikFields.all.length === 0) {
     return (
       <div
         style={{
@@ -171,9 +176,9 @@ export default function SmartWritebackTable({
           fontSize: 14,
         }}
       >
-        <div style={{ marginBottom: 16 }}>🔄 Analyzing Qlik data model...</div>
+        <div style={{ marginBottom: 16 }}>Loading Qlik data model...</div>
         <div style={{ fontSize: 12 }}>
-          Loading available dimensions and measures
+          Analyzing available dimensions and measures
         </div>
       </div>
     );
@@ -191,22 +196,40 @@ export default function SmartWritebackTable({
           color: "#856404",
         }}
       >
-        <div style={{ fontWeight: "bold", marginBottom: 8 }}>⚠️ Error</div>
+        <div style={{ fontWeight: "bold", marginBottom: 8 }}>Error</div>
         <div style={{ marginBottom: 12 }}>{error}</div>
-        <button
-          onClick={handleReset}
-          style={{
-            padding: "6px 12px",
-            backgroundColor: "#007acc",
-            color: "white",
-            border: "none",
-            borderRadius: 4,
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          Start Over
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={handleReset}
+            style={{
+              padding: "6px 12px",
+              backgroundColor: "#007acc",
+              color: "white",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+          >
+            Start Over
+          </button>
+          {currentStep !== "upload" && (
+            <button
+              onClick={handleGoBack}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "#6c757d",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Go Back
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -242,13 +265,21 @@ export default function SmartWritebackTable({
                   color:
                     currentStep === "upload"
                       ? "#007acc"
-                      : currentStep !== "upload"
+                      : ["mapping", "table"].includes(currentStep)
                       ? "#28a745"
                       : "#6c757d",
                   fontWeight: currentStep === "upload" ? "bold" : "normal",
+                  cursor: ["mapping", "table"].includes(currentStep)
+                    ? "pointer"
+                    : "default",
                 }}
+                onClick={
+                  ["mapping", "table"].includes(currentStep)
+                    ? () => setCurrentStep("upload")
+                    : undefined
+                }
               >
-                1️⃣ Upload
+                1. Upload
               </span>
               <span>→</span>
               <span
@@ -260,9 +291,15 @@ export default function SmartWritebackTable({
                       ? "#28a745"
                       : "#6c757d",
                   fontWeight: currentStep === "mapping" ? "bold" : "normal",
+                  cursor: currentStep === "table" ? "pointer" : "default",
                 }}
+                onClick={
+                  currentStep === "table"
+                    ? () => setCurrentStep("mapping")
+                    : undefined
+                }
               >
-                2️⃣ Map Columns
+                2. Map Columns
               </span>
               <span>→</span>
               <span
@@ -271,18 +308,41 @@ export default function SmartWritebackTable({
                   fontWeight: currentStep === "table" ? "bold" : "normal",
                 }}
               >
-                3️⃣ Edit Data
+                3. Edit Data
               </span>
             </div>
 
-            {qlikFields.all.length > 0 && (
-              <div style={{ fontSize: 11, color: "#28a745" }}>
-                ✅ {qlikFields.dimensions.length} dimensions,{" "}
-                {qlikFields.measures.length} measures loaded
-              </div>
-            )}
+            {/* Status indicators */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                fontSize: 11,
+              }}
+            >
+              {qlikFields.all.length > 0 && (
+                <div style={{ color: "#28a745" }}>
+                  {qlikFields.dimensions.length} dimensions,{" "}
+                  {qlikFields.measures.length} measures loaded
+                </div>
+              )}
+
+              {uploadedFile && (
+                <div style={{ color: "#007acc" }}>
+                  File: {uploadedFile.name}
+                </div>
+              )}
+
+              {Object.keys(columnMappings).length > 0 && (
+                <div style={{ color: "#28a745" }}>
+                  {Object.keys(columnMappings).length} columns mapped
+                </div>
+              )}
+            </div>
           </div>
 
+          {/* Reset button */}
           {currentStep !== "upload" && (
             <button
               onClick={handleReset}
@@ -305,7 +365,12 @@ export default function SmartWritebackTable({
 
       {/* Main content */}
       <div
-        style={{ padding: 16, height: "calc(100% - 60px)", overflow: "auto" }}
+        style={{
+          height: "calc(100% - 60px)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
         {currentStep === "upload" && (
           <FileUpload
