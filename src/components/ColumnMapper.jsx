@@ -102,7 +102,7 @@ export default function SimpleColumnMapper({
               color: "#374151",
             }}
           >
-            ENHANCED Column Mapping Review
+            Column Mapping Review
           </h2>
           <p
             style={{
@@ -633,7 +633,6 @@ export default function SimpleColumnMapper({
           </div>
         </div>
       </div>
-
       {/* ===== BOTTOM ACTION AREA ===== */}
       {/* Final confirmation button to proceed to table generation */}
       <div
@@ -662,7 +661,7 @@ export default function SimpleColumnMapper({
             cursor: mappedCount > 0 ? "pointer" : "not-allowed", // Show appropriate cursor
           }}
         >
-          Generate Table ({mappedCount} columns)
+          Generate Table Structure ({mappedCount} columns)
         </button>
       </div>
     </div>
