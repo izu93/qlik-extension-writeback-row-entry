@@ -106,7 +106,7 @@ export default function FileUpload({ onFileUpload, isLoading, qlikFields }) {
           color: "#495057",
           fontWeight: "600"
         }}>
-          🚀 Upload Your Data File
+          Upload Your Data File
         </h2>
         <p style={{ 
           margin: "8px 0 0 0", 

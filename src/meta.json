@@ -1,0 +1,8 @@
+{
+  "name": "smart-writeback",
+  "description": "Smart Writeback Extension with Intelligent Column Mapping",
+  "version": "0.1.0",
+  "author": "Izu",
+  "type": "visualization",
+  "main": "index.js"
+}
