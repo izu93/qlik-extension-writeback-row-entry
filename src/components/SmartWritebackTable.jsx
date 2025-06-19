@@ -1,404 +1,313 @@
+// ===== 5. SIMPLE MAIN COMPONENT WITH ENHANCED UI =====
+// SmartWritebackTable.jsx - Main orchestrator component with inline comments
 import React, { useState, useEffect } from "react";
+import { parseCSVFile } from "../services/fileParser";
+import { getQlikFields } from "../services/modelAnalyzer";
+import { generateSmartMappings } from "../services/mappingEngine";
+import SimpleColumnMapper from "./ColumnMapper";
 import FileUpload from "./FileUpload";
-import ColumnMapper from "./ColumnMapper";
 import MappedTable from "./MappedTable";
-import { analyzeQlikModel } from "../services/modelAnalyzer";
-import { parseUploadedFile } from "../services/fileParser";
-import { generateMappingSuggestions } from "../services/mappingEngine";
 
-/**
- * SmartWritebackTable: Enhanced with actual file processing
- *
- * Flow:
- * 1. Upload file (Excel/CSV) and trigger parsing
- * 2. Parse and analyze columns with sample data
- * 3. Get Qlik data model fields
- * 4. Generate intelligent mapping suggestions
- * 5. User reviews/adjusts mappings in ColumnMapper
- * 6. Generate dynamic table from confirmed mappings
- * 7. Enable row-level editing and save
- */
 export default function SmartWritebackTable({
-  layout,
   app,
+  layout,
   model,
   selections,
 }) {
-  // Application states
-  const [currentStep, setCurrentStep] = useState("upload");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  // ===== STATE MANAGEMENT =====
+  // Tracks which step user is currently on in the 3-step workflow
+  const [step, setStep] = useState("upload"); // 'upload' | 'mapping' | 'complete'
 
-  // File upload states
-  const [uploadedFile, setUploadedFile] = useState(null);
+  // Stores the uploaded file object for reference
+  const [file, setFile] = useState(null);
+
+  // Contains parsed CSV data: {columns: [], rows: [], totalRows: number, totalColumns: number}
   const [parsedData, setParsedData] = useState(null);
 
-  // Qlik model states
+  // Qlik field structure: {all: [], dimensions: [], measures: []}
   const [qlikFields, setQlikFields] = useState({
+    all: [],
     dimensions: [],
     measures: [],
-    all: [],
   });
 
-  // Mapping states
-  const [columnMappings, setColumnMappings] = useState({});
-  const [mappingSuggestions, setMappingSuggestions] = useState({});
+  // Column mappings: {fileColumnName: {qlikField, confidence, matchType, reason}}
+  const [mappings, setMappings] = useState({});
 
-  // Table states
-  const [finalHypercube, setFinalHypercube] = useState(null);
-  const [tableData, setTableData] = useState([]);
+  // Loading state for UI feedback during file processing
+  const [isLoading, setIsLoading] = useState(false);
 
-  /**
-   * Initialize by analyzing the Qlik data model
-   */
+  // ===== QLIK FIELDS INITIALIZATION =====
+  // Load available Qlik fields when component mounts or app changes
   useEffect(() => {
-    async function initializeQlikModel() {
-      if (!app) return;
-
-      try {
-        setIsLoading(true);
-        const modelData = await analyzeQlikModel(app);
-        setQlikFields(modelData);
-        console.log("Qlik model loaded:", modelData);
-      } catch (err) {
-        console.error("Failed to analyze Qlik model:", err);
-        setError("Failed to load Qlik data model");
-      } finally {
-        setIsLoading(false);
-      }
+    if (app) {
+      console.log("🔌 Loading Qlik fields...");
+      // Try to get real Qlik fields from the app
+      getQlikFields(app)
+        .then((fields) => {
+          setQlikFields(fields); // Store {all, dimensions, measures} structure
+          console.log("Qlik fields loaded:", fields.all.length);
+        })
+        .catch((error) => {
+          console.error("Failed to load Qlik fields:", error);
+          // Fallback to mock swimming competition fields for demo
+          setQlikFields({
+            all: [
+              { name: "name", type: "dimension" },
+              { name: "competition", type: "dimension" },
+              { name: "distance", type: "dimension" },
+              { name: "dq", type: "dimension" }, // disqualification
+              { name: "event", type: "dimension" },
+              { name: "heat", type: "dimension" },
+              { name: "lane", type: "dimension" },
+              { name: "lap_time", type: "dimension" },
+              { name: "place", type: "dimension" },
+              { name: "reaction_time", type: "dimension" },
+              { name: "team", type: "dimension" },
+              { name: "time", type: "dimension" },
+            ],
+            dimensions: [
+              { name: "name", type: "dimension" },
+              { name: "competition", type: "dimension" },
+              { name: "distance", type: "dimension" },
+              { name: "dq", type: "dimension" },
+              { name: "event", type: "dimension" },
+              { name: "heat", type: "dimension" },
+              { name: "lane", type: "dimension" },
+              { name: "lap_time", type: "dimension" },
+              { name: "place", type: "dimension" },
+              { name: "reaction_time", type: "dimension" },
+              { name: "team", type: "dimension" },
+              { name: "time", type: "dimension" },
+            ],
+            measures: [], // No measures in this mock data
+          });
+        });
+    } else {
+      // No Qlik app provided - use basic mock fields
+      console.warn("No Qlik app provided, using mock fields");
+      setQlikFields({
+        all: [
+          { name: "name", type: "dimension" },
+          { name: "athlete", type: "dimension" },
+          { name: "team", type: "dimension" },
+          { name: "event", type: "dimension" },
+          { name: "time", type: "measure" },
+          { name: "place", type: "measure" },
+        ],
+        dimensions: [
+          { name: "name", type: "dimension" },
+          { name: "athlete", type: "dimension" },
+          { name: "team", type: "dimension" },
+          { name: "event", type: "dimension" },
+        ],
+        measures: [
+          { name: "time", type: "measure" },
+          { name: "place", type: "measure" },
+        ],
+      });
     }
+  }, [app]); // Re-run when app object changes
 
-    initializeQlikModel();
-  }, [app]);
-
-  /**
-   * Handle file upload and processing
-   */
-  const handleFileUpload = async (file) => {
+  // ===== FILE UPLOAD HANDLER =====
+  // Processes uploaded file through the complete pipeline
+  const handleFileUpload = async (uploadedFile) => {
     try {
-      setIsLoading(true);
-      setError(null);
+      setIsLoading(true); // Show loading spinner in UI
+      console.log("📁 Processing file:", uploadedFile.name);
 
-      console.log("Starting file processing:", file.name);
+      // Step 1: Parse CSV file into structured data
+      const parsed = await parseCSVFile(uploadedFile);
+      console.log(
+        "File parsed:",
+        parsed.totalRows,
+        "rows,",
+        parsed.totalColumns,
+        "columns"
+      );
 
-      // Step 1: Parse the uploaded file
-      const parsed = await parseUploadedFile(file);
-      console.log("File parsed successfully:", parsed);
-
-      // Step 2: Generate intelligent mapping suggestions
-      const suggestions = generateMappingSuggestions(
+      // Step 2: Generate smart column mappings using AI-like matching
+      const smartMappings = generateSmartMappings(
         parsed.columns,
         qlikFields.all
       );
-      console.log("Mapping suggestions generated:", suggestions);
-
-      // Step 3: Store results and advance to mapping step
-      setUploadedFile(file);
-      setParsedData(parsed);
-      setMappingSuggestions(suggestions);
-
-      // Step 4: Check if we can auto-advance
-      const highConfidenceCount = Object.values(suggestions).filter(
-        (s) => s.confidence > 0.8
-      ).length;
-
       console.log(
-        `Generated ${highConfidenceCount} high-confidence mappings out of ${parsed.columns.length} columns`
+        "Smart mappings generated:",
+        Object.keys(smartMappings).length
       );
 
-      // Always go to mapping step for user review
-      setCurrentStep("mapping");
-    } catch (err) {
-      console.error("File processing error:", err);
-      setError(`Failed to process file: ${err.message}`);
+      // Step 3: Update state and move to mapping review step
+      setFile(uploadedFile);
+      setParsedData(parsed);
+      setMappings(smartMappings);
+      setStep("mapping"); // Advance workflow to mapping review
+    } catch (error) {
+      console.error("File processing failed:", error);
+      alert("File processing failed: " + error.message); // User-friendly error
     } finally {
-      setIsLoading(false);
+      setIsLoading(false); // Hide loading spinner
     }
   };
 
-  /**
-   * Handle mapping confirmation and table generation
-   */
-  const handleMappingConfirm = async (finalMappings) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      console.log("Confirming mappings:", finalMappings);
-      setColumnMappings(finalMappings);
-
-      // TODO: Generate hypercube definition from mappings
-      // This will be implemented in Phase 3
-      console.log("Table generation will be implemented in Phase 3");
-
-      setCurrentStep("table");
-    } catch (err) {
-      console.error("Mapping confirmation error:", err);
-      setError(`Failed to generate table: ${err.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+  // ===== MAPPING CONFIRMATION HANDLER =====
+  // User confirms their mapping choices and moves to table generation
+  const handleMappingConfirm = (finalMappings) => {
+    console.log("Mappings confirmed:", Object.keys(finalMappings).length);
+    setMappings(finalMappings); // Store user's final mapping decisions
+    setStep("complete"); // Move to table generation step
   };
 
-  /**
-   * Reset to start over
-   */
+  // ===== RESET HANDLER =====
+  // Clears all state and returns to upload step
   const handleReset = () => {
-    setCurrentStep("upload");
-    setUploadedFile(null);
+    setStep("upload");
+    setFile(null);
     setParsedData(null);
-    setColumnMappings({});
-    setMappingSuggestions({});
-    setFinalHypercube(null);
-    setTableData([]);
-    setError(null);
+    setMappings({});
   };
 
-  /**
-   * Go back to previous step
-   */
-  const handleGoBack = () => {
-    if (currentStep === "mapping") {
-      setCurrentStep("upload");
-    } else if (currentStep === "table") {
-      setCurrentStep("mapping");
-    }
-  };
-
-  // Loading state during initialization
-  if (isLoading && currentStep === "upload" && qlikFields.all.length === 0) {
-    return (
+  // ===== PROGRESS BREADCRUMB COMPONENT =====
+  // Shows current step and navigation info in header
+  const ProgressBreadcrumb = () => (
+    <div
+      style={{
+        padding: "16px 24px",
+        borderBottom: "1px solid #e5e7eb",
+        backgroundColor: "#f9fafb",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+      }}
+    >
+      {/* Main title */}
       <div
         style={{
-          padding: 40,
-          textAlign: "center",
-          color: "#666",
-          fontSize: 14,
+          fontSize: "18px",
+          fontWeight: "600",
+          color: "#374151",
+          marginBottom: "4px",
         }}
       >
-        <div style={{ marginBottom: 16 }}>Loading Qlik data model...</div>
-        <div style={{ fontSize: 12 }}>
-          Analyzing available dimensions and measures
-        </div>
+        Smart Writeback Extension
       </div>
-    );
-  }
 
-  // Error state
-  if (error) {
-    return (
+      {/* Subtitle */}
       <div
         style={{
-          padding: 24,
-          backgroundColor: "#fff3cd",
-          border: "1px solid #ffeaa7",
-          borderRadius: 4,
-          color: "#856404",
+          fontSize: "14px",
+          color: "#6b7280",
+          marginBottom: "12px",
         }}
       >
-        <div style={{ fontWeight: "bold", marginBottom: 8 }}>Error</div>
-        <div style={{ marginBottom: 12 }}>{error}</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={handleReset}
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "#007acc",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            Start Over
-          </button>
-          {currentStep !== "upload" && (
-            <button
-              onClick={handleGoBack}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "#6c757d",
-                color: "white",
-                border: "none",
-                borderRadius: 4,
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
-              Go Back
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ width: "100%", height: "100%", backgroundColor: "white" }}>
-      {/* Progress indicator */}
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: "1px solid #eee",
-          backgroundColor: "#f8f9fa",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: "bold", color: "#495057" }}>
-            Smart Writeback Extension
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* Step indicators */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 12,
-                color: "#6c757d",
-              }}
-            >
-              <span
-                style={{
-                  color:
-                    currentStep === "upload"
-                      ? "#007acc"
-                      : ["mapping", "table"].includes(currentStep)
-                      ? "#28a745"
-                      : "#6c757d",
-                  fontWeight: currentStep === "upload" ? "bold" : "normal",
-                  cursor: ["mapping", "table"].includes(currentStep)
-                    ? "pointer"
-                    : "default",
-                }}
-                onClick={
-                  ["mapping", "table"].includes(currentStep)
-                    ? () => setCurrentStep("upload")
-                    : undefined
-                }
-              >
-                1. Upload
-              </span>
-              <span>→</span>
-              <span
-                style={{
-                  color:
-                    currentStep === "mapping"
-                      ? "#007acc"
-                      : currentStep === "table"
-                      ? "#28a745"
-                      : "#6c757d",
-                  fontWeight: currentStep === "mapping" ? "bold" : "normal",
-                  cursor: currentStep === "table" ? "pointer" : "default",
-                }}
-                onClick={
-                  currentStep === "table"
-                    ? () => setCurrentStep("mapping")
-                    : undefined
-                }
-              >
-                2. Map Columns
-              </span>
-              <span>→</span>
-              <span
-                style={{
-                  color: currentStep === "table" ? "#007acc" : "#6c757d",
-                  fontWeight: currentStep === "table" ? "bold" : "normal",
-                }}
-              >
-                3. Edit Data
-              </span>
-            </div>
-
-            {/* Status indicators */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                fontSize: 11,
-              }}
-            >
-              {qlikFields.all.length > 0 && (
-                <div style={{ color: "#28a745" }}>
-                  {qlikFields.dimensions.length} dimensions,{" "}
-                  {qlikFields.measures.length} measures loaded
-                </div>
-              )}
-
-              {uploadedFile && (
-                <div style={{ color: "#007acc" }}>
-                  File: {uploadedFile.name}
-                </div>
-              )}
-
-              {Object.keys(columnMappings).length > 0 && (
-                <div style={{ color: "#28a745" }}>
-                  {Object.keys(columnMappings).length} columns mapped
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Reset button */}
-          {currentStep !== "upload" && (
-            <button
-              onClick={handleReset}
-              style={{
-                marginLeft: "auto",
-                padding: "4px 8px",
-                backgroundColor: "#6c757d",
-                color: "white",
-                border: "none",
-                borderRadius: 3,
-                cursor: "pointer",
-                fontSize: 11,
-              }}
-            >
-              Start Over
-            </button>
-          )}
-        </div>
+        Intelligent Column Mapping
       </div>
 
-      {/* Main content */}
+      {/* Navigation breadcrumb */}
       <div
         style={{
-          height: "calc(100% - 60px)",
-          overflow: "hidden",
           display: "flex",
-          flexDirection: "column",
+          alignItems: "center",
+          gap: "8px",
+          fontSize: "14px",
         }}
       >
-        {currentStep === "upload" && (
+        <span style={{ color: "#2563eb", fontWeight: "500" }}>
+          Smart Writeback Extension
+        </span>
+        <span style={{ color: "#9ca3af" }}>→</span>
+
+        {/* Step 1 - Upload (highlighted when active) */}
+        <span style={{ color: step === "upload" ? "#2563eb" : "#9ca3af" }}>
+          1. Upload
+        </span>
+        <span style={{ color: "#9ca3af" }}>→</span>
+
+        {/* Step 2 - Map Columns (highlighted when active) */}
+        <span style={{ color: step === "mapping" ? "#2563eb" : "#9ca3af" }}>
+          2. Map Columns
+        </span>
+        <span style={{ color: "#9ca3af" }}>→</span>
+
+        {/* Step 3 - Edit Data (highlighted when active) */}
+        <span style={{ color: step === "complete" ? "#2563eb" : "#9ca3af" }}>
+          3. Edit Data
+        </span>
+
+        {/* Show data info when file is loaded */}
+        {parsedData && (
+          <>
+            <span style={{ marginLeft: "16px", color: "#6b7280" }}>
+              {qlikFields.dimensions.length} dimensions,{" "}
+              {qlikFields.measures.length} measures loaded
+            </span>
+            {file && (
+              <span style={{ color: "#6b7280" }}>File: {file.name}</span>
+            )}
+          </>
+        )}
+
+        {/* Reset button to start over */}
+        <button
+          onClick={handleReset}
+          style={{
+            marginLeft: "auto",
+            backgroundColor: "#6b7280",
+            color: "white",
+            padding: "6px 12px",
+            borderRadius: "4px",
+            border: "none",
+            fontSize: "12px",
+            cursor: "pointer",
+            fontWeight: "500",
+          }}
+        >
+          Start Over
+        </button>
+      </div>
+    </div>
+  );
+
+  // ===== MAIN RENDER =====
+  // Conditionally renders different components based on current step
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        backgroundColor: "white",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+      }}
+    >
+      {/* Always show progress breadcrumb at top */}
+      <ProgressBreadcrumb />
+
+      <div style={{ padding: "24px" }}>
+        {/* STEP 1: File Upload - Show drag-drop interface */}
+        {step === "upload" && (
           <FileUpload
-            onFileUpload={handleFileUpload}
-            isLoading={isLoading}
-            qlikFields={qlikFields}
+            onFileUpload={handleFileUpload} // Callback when file is selected
+            isLoading={isLoading} // Loading state for UI
+            qlikFields={qlikFields} // Show available fields to user
           />
         )}
 
-        {currentStep === "mapping" && (
-          <ColumnMapper
-            parsedData={parsedData}
-            qlikFields={qlikFields}
-            suggestions={mappingSuggestions}
-            currentMappings={columnMappings}
-            onMappingConfirm={handleMappingConfirm}
-            isLoading={isLoading}
+        {/* STEP 2: Column Mapping - Show mapping interface (only when data exists) */}
+        {step === "mapping" && parsedData && (
+          <SimpleColumnMapper
+            fileColumns={parsedData.columns} // Columns from uploaded file
+            qlikFields={qlikFields.all} // Available Qlik fields for mapping
+            suggestions={mappings} // Smart mappings generated automatically
+            onMappingConfirm={handleMappingConfirm} // Callback when user confirms mappings
           />
         )}
 
-        {currentStep === "table" && (
+        {/* STEP 3: Table Generation - Show final table structure */}
+        {step === "complete" && (
           <MappedTable
-            columnMappings={columnMappings}
-            parsedData={parsedData}
-            layout={layout}
-            app={app}
-            model={model}
-            selections={selections}
+            columnMappings={mappings} // User's confirmed column mappings
+            parsedData={parsedData} // Original file data
+            layout={layout} // Qlik layout object
+            app={app} // Qlik app object
+            model={model} // Qlik model object
+            selections={selections} // Qlik selections object
           />
         )}
       </div>

@@ -1,484 +1,75 @@
-/**
- * modelAnalyzer.js - FIXED Qlik Data Model Introspection Service
- *
- * Fixed to eliminate duplicate fields and provide accurate field counts
- */
-
-/**
- * Analyze Qlik app to get all available fields and categorize them (FIXED - no duplicates)
- */
-export async function analyzeQlikModel(app) {
+// ===== 2. SIMPLE MODEL ANALYZER =====
+// modelAnalyzer.js - Basic Qlik field extraction (connects to Qlik app)
+export async function getQlikFields(app) {
   try {
-    if (!app) {
-      throw new Error("App object not available");
-    }
+    console.log("Getting Qlik fields...");
 
-    console.log("🔍 Analyzing Qlik data model (FIXED version)...");
-
-    // Try to get app layout first
-    let appLayout;
+    // Try to get field list from Qlik app using official API
+    let fields = [];
     try {
-      appLayout = await app.getAppLayout();
-      console.log("📊 App layout retrieved:", appLayout.qTitle);
-    } catch (layoutError) {
-      console.warn("⚠️ Could not get app layout:", layoutError);
-    }
-
-    // Try different field list approaches
-    let fieldList = [];
-
-    try {
-      // Method 1: Try getList for fields
-      if (typeof app.getList === "function") {
-        const fieldListObject = await app.getList("FieldList");
-        if (fieldListObject && fieldListObject.qFieldList) {
-          fieldList = fieldListObject.qFieldList.qItems || [];
-          console.log(
-            `📋 Found ${fieldList.length} fields using getList method`
-          );
-        }
-      }
+      // Call Qlik's built-in method to get all fields in the data model
+      const fieldList = await app.getList("FieldList");
+      fields = fieldList.qFieldList?.qItems || []; // Extract the field array
     } catch (error) {
-      console.warn("❌ getList method failed:", error);
+      // If Qlik API fails (demo mode), use mock data instead
+      console.warn("Using mock fields for demo");
+      fields = createMockFields();
     }
 
-    // Method 2: If no fields found, try createSessionObject approach
-    if (fieldList.length === 0) {
-      try {
-        const fieldListDef = {
-          qInfo: { qType: "FieldList" },
-          qFieldListDef: {},
-        };
+    // Simple categorization - split fields into dimensions vs measures
+    // Dimensions = text fields (names, categories) / Measures = number fields (times, scores)
+    const dimensions = fields
+      .filter((f) => !f.qIsNumeric)
+      .map((f) => ({
+        name: f.qName, // Field name (e.g., "athlete_name")
+        type: "dimension", // Mark as dimension for Qlik
+      }));
 
-        const fieldListObj = await app.createSessionObject(fieldListDef);
-        const layout = await fieldListObj.getLayout();
+    const measures = fields
+      .filter((f) => f.qIsNumeric)
+      .map((f) => ({
+        name: f.qName, // Field name (e.g., "race_time")
+        type: "measure", // Mark as measure for Qlik
+      }));
 
-        if (layout && layout.qFieldList && layout.qFieldList.qItems) {
-          fieldList = layout.qFieldList.qItems;
-          console.log(
-            `📋 Found ${fieldList.length} fields using createSessionObject method`
-          );
-        }
+    console.log(
+      "Found fields:",
+      dimensions.length,
+      "dimensions,",
+      measures.length,
+      "measures"
+    );
 
-        // Clean up session object
-        if (fieldListObj && typeof fieldListObj.destroy === "function") {
-          await fieldListObj.destroy();
-        }
-      } catch (sessionError) {
-        console.warn("❌ createSessionObject method failed:", sessionError);
-      }
-    }
-
-    // Method 3: Fallback - create mock fields for testing
-    if (fieldList.length === 0) {
-      console.warn(
-        "⚠️ No fields found via API, creating mock swimming fields for testing"
-      );
-      fieldList = createMockSwimmingFields();
-    }
-
-    // FIXED: Process and deduplicate the field list
-    const categorizedFields = categorizeFieldsFixed(fieldList);
-    const enrichedFields = enrichFieldMetadataFixed(categorizedFields);
-
-    console.log("✅ Model analysis complete (FIXED):", {
-      dimensions: enrichedFields.dimensions.length,
-      measures: enrichedFields.measures.length,
-      total: enrichedFields.all.length,
-      duplicatesRemoved: fieldList.length - enrichedFields.all.length,
-    });
-
-    return enrichedFields;
+    // Return organized field structure for Smart Matcher
+    return {
+      dimensions, // Text-based fields
+      measures, // Number-based fields
+      all: [...dimensions, ...measures], // Combined list for matching
+    };
   } catch (error) {
-    console.error("❌ Failed to analyze Qlik model:", error);
-
-    // Return mock fields as fallback
-    console.log("🏊‍♀️ Returning mock swimming fields as fallback");
-    const mockFields = createMockSwimmingFields();
-    const categorizedFields = categorizeFieldsFixed(mockFields);
-    return enrichFieldMetadataFixed(categorizedFields);
+    // Fallback to mock data if everything fails
+    console.warn("Using mock fields:", error);
+    return {
+      dimensions: createMockFields().filter((f) => !f.qIsNumeric),
+      measures: createMockFields().filter((f) => f.qIsNumeric),
+      all: createMockFields(),
+    };
   }
 }
 
-/**
- * Create mock swimming fields for testing (IMPROVED with more variety)
- */
-function createMockSwimmingFields() {
+// Create demo fields when Qlik connection isn't available
+function createMockFields() {
   return [
-    // Athlete information
-    { qName: "name", qTags: [], qIsNumeric: false, qCardinal: 50 },
-    { qName: "athlete", qTags: [], qIsNumeric: false, qCardinal: 50 },
-    { qName: "swimmer", qTags: [], qIsNumeric: false, qCardinal: 50 },
-    { qName: "team", qTags: [], qIsNumeric: false, qCardinal: 20 },
-    { qName: "club", qTags: [], qIsNumeric: false, qCardinal: 20 },
-    { qName: "country", qTags: [], qIsNumeric: false, qCardinal: 15 },
-
-    // Competition structure
-    { qName: "event", qTags: [], qIsNumeric: false, qCardinal: 30 },
-    { qName: "race", qTags: [], qIsNumeric: false, qCardinal: 30 },
-    { qName: "heat", qTags: [], qIsNumeric: false, qCardinal: 10 },
-    { qName: "lane", qTags: [], qIsNumeric: true, qCardinal: 8 },
-    { qName: "place", qTags: [], qIsNumeric: true, qCardinal: 8 },
-    { qName: "rank", qTags: [], qIsNumeric: true, qCardinal: 8 },
-
-    // Performance metrics
-    { qName: "time", qTags: [], qIsNumeric: true, qCardinal: 200 },
-    { qName: "finish_time", qTags: [], qIsNumeric: true, qCardinal: 200 },
-    { qName: "reaction_time", qTags: [], qIsNumeric: true, qCardinal: 100 },
-    { qName: "lap_time", qTags: [], qIsNumeric: true, qCardinal: 150 },
-    { qName: "split_time", qTags: [], qIsNumeric: true, qCardinal: 150 },
-    { qName: "distance", qTags: [], qIsNumeric: true, qCardinal: 10 },
-
-    // Competition details
-    { qName: "competition", qTags: [], qIsNumeric: false, qCardinal: 5 },
-    { qName: "meet", qTags: [], qIsNumeric: false, qCardinal: 5 },
-    { qName: "venue", qTags: [], qIsNumeric: false, qCardinal: 3 },
-    { qName: "pool", qTags: [], qIsNumeric: false, qCardinal: 3 },
-    { qName: "date", qTags: ["$date"], qIsNumeric: false, qCardinal: 10 },
-
-    // Swimming specific
-    { qName: "stroke", qTags: [], qIsNumeric: false, qCardinal: 4 },
-    { qName: "style", qTags: [], qIsNumeric: false, qCardinal: 4 },
-    { qName: "dq", qTags: [], qIsNumeric: false, qCardinal: 2 },
-    { qName: "disqualified", qTags: [], qIsNumeric: false, qCardinal: 2 },
-    { qName: "age_group", qTags: [], qIsNumeric: false, qCardinal: 5 },
-    { qName: "category", qTags: [], qIsNumeric: false, qCardinal: 5 },
+    // Swimming-specific field examples with proper typing
+    { qName: "name", qIsNumeric: false }, // Athlete names (text)
+    { qName: "athlete", qIsNumeric: false }, // Alternative athlete field
+    { qName: "team", qIsNumeric: false }, // Team names (text)
+    { qName: "event", qIsNumeric: false }, // Event names like "100m freestyle"
+    { qName: "heat", qIsNumeric: false }, // Heat numbers/names
+    { qName: "lane", qIsNumeric: false }, // Lane assignments
+    { qName: "time", qIsNumeric: true }, // Race times (numeric)
+    { qName: "place", qIsNumeric: true }, // Finishing position (numeric)
+    { qName: "reaction_time", qIsNumeric: true }, // Start reaction time (numeric)
+    { qName: "distance", qIsNumeric: true }, // Race distance (numeric)
   ];
-}
-
-/**
- * FIXED: Categorize fields into dimensions and measures and remove duplicates
- */
-function categorizeFieldsFixed(fieldList) {
-  const dimensions = [];
-  const measures = [];
-  const all = [];
-  const seenFields = new Set(); // Track seen field names to avoid duplicates
-
-  fieldList.forEach((field) => {
-    try {
-      // Handle both API response formats
-      const fieldName = field.qName || field.name || field;
-
-      // FIXED: Skip duplicates
-      if (seenFields.has(fieldName)) {
-        console.log(`🔄 Skipping duplicate field: ${fieldName}`);
-        return;
-      }
-      seenFields.add(fieldName);
-
-      const fieldTags = field.qTags || field.tags || [];
-      const isNumeric = field.qIsNumeric || field.isNumeric || false;
-      const cardinality = field.qCardinal || field.cardinal || 0;
-
-      // Create base field info
-      const fieldInfo = {
-        name: fieldName,
-        title: fieldName,
-        type: inferFieldType(field),
-        tags: fieldTags,
-        isNumeric: isNumeric,
-        cardinalCardinality: cardinality,
-      };
-
-      // Categorize based on field properties
-      if (shouldBeDimension(fieldInfo)) {
-        dimensions.push({
-          ...fieldInfo,
-          category: "dimension",
-        });
-      } else if (shouldBeMeasure(fieldInfo)) {
-        measures.push({
-          ...fieldInfo,
-          category: "measure",
-        });
-      }
-
-      // Add to all fields regardless of category
-      all.push(fieldInfo);
-    } catch (fieldError) {
-      console.warn(`❌ Failed to analyze field:`, fieldError);
-    }
-  });
-
-  console.log(
-    `✅ FIXED categorization: ${dimensions.length} dimensions, ${measures.length} measures, ${all.length} total (duplicates removed)`
-  );
-
-  return { dimensions, measures, all };
-}
-
-/**
- * FIXED: Enrich fields with additional metadata and ensure no duplicates
- */
-function enrichFieldMetadataFixed(categorizedFields) {
-  // Enhanced swimming-specific field patterns
-  const swimmingPatterns = {
-    dimensions: [
-      "name",
-      "athlete",
-      "swimmer",
-      "participant",
-      "team",
-      "club",
-      "country",
-      "nation",
-      "event",
-      "race",
-      "stroke",
-      "style",
-      "distance",
-      "heat",
-      "lane",
-      "place",
-      "rank",
-      "position",
-      "competition",
-      "meet",
-      "championship",
-      "age_group",
-      "category",
-      "gender",
-      "sex",
-      "pool",
-      "venue",
-      "date",
-      "session",
-    ],
-    measures: [
-      "time",
-      "duration",
-      "seconds",
-      "minutes",
-      "reaction_time",
-      "split",
-      "lap_time",
-      "finish_time",
-      "points",
-      "score",
-      "rating",
-      "rank",
-      "place",
-      "position",
-      "distance",
-      "length",
-      "meters",
-      "age",
-      "year",
-    ],
-  };
-
-  // FIXED: Enhance dimensions with swimming context and remove duplicates
-  const enhancedDimensions = removeDuplicatesByName(
-    categorizedFields.dimensions.map((dim) => ({
-      ...dim,
-      swimmingRelevance: calculateSwimmingRelevance(
-        dim.name,
-        swimmingPatterns.dimensions
-      ),
-      suggestedFor: getSuggestedUseCase(dim.name),
-    }))
-  );
-
-  // FIXED: Enhance measures with swimming context and remove duplicates
-  const enhancedMeasures = removeDuplicatesByName(
-    categorizedFields.measures.map((measure) => ({
-      ...measure,
-      swimmingRelevance: calculateSwimmingRelevance(
-        measure.name,
-        swimmingPatterns.measures
-      ),
-      suggestedFor: getSuggestedUseCase(measure.name),
-    }))
-  );
-
-  // FIXED: Remove duplicates from all fields
-  const allFieldsNoDuplicates = removeDuplicatesByName([
-    ...enhancedDimensions,
-    ...enhancedMeasures,
-    ...categorizedFields.all,
-  ]);
-
-  // Sort by swimming relevance (most relevant first)
-  enhancedDimensions.sort((a, b) => b.swimmingRelevance - a.swimmingRelevance);
-  enhancedMeasures.sort((a, b) => b.swimmingRelevance - a.swimmingRelevance);
-
-  console.log(
-    `✅ FIXED enrichment complete: ${enhancedDimensions.length} dimensions, ${enhancedMeasures.length} measures, ${allFieldsNoDuplicates.length} total unique fields`
-  );
-
-  return {
-    dimensions: enhancedDimensions,
-    measures: enhancedMeasures,
-    all: allFieldsNoDuplicates,
-  };
-}
-
-/**
- * FIXED: Remove duplicate fields by name
- */
-function removeDuplicatesByName(fields) {
-  const seen = new Set();
-  return fields.filter((field) => {
-    if (seen.has(field.name)) {
-      return false;
-    }
-    seen.add(field.name);
-    return true;
-  });
-}
-
-/**
- * Infer field type from Qlik field properties
- */
-function inferFieldType(field) {
-  const isNumeric = field.qIsNumeric || field.isNumeric || false;
-  const tags = field.qTags || field.tags || [];
-  const cardinality = field.qCardinal || field.cardinal || 0;
-
-  if (isNumeric) {
-    return "numeric";
-  }
-
-  if (tags.includes("$date")) {
-    return "date";
-  }
-
-  if (tags.includes("$timestamp")) {
-    return "timestamp";
-  }
-
-  if (cardinality > 0 && cardinality < 50) {
-    return "categorical";
-  }
-
-  return "text";
-}
-
-/**
- * Determine if field should be treated as dimension
- */
-function shouldBeDimension(fieldInfo) {
-  // Low cardinality suggests categorical data (good for dimensions)
-  if (
-    fieldInfo.cardinalCardinality > 0 &&
-    fieldInfo.cardinalCardinality < 1000
-  ) {
-    return true;
-  }
-
-  // Text fields are typically dimensions
-  if (!fieldInfo.isNumeric && fieldInfo.type !== "date") {
-    return true;
-  }
-
-  // Date/time fields are good dimensions
-  if (fieldInfo.type === "date" || fieldInfo.type === "timestamp") {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Determine if field should be treated as measure
- */
-function shouldBeMeasure(fieldInfo) {
-  // Numeric fields with high cardinality are typically measures
-  if (fieldInfo.isNumeric && fieldInfo.cardinalCardinality > 50) {
-    return true;
-  }
-
-  // Fields with specific measure-like names
-  const measurePatterns = [
-    "time",
-    "duration",
-    "score",
-    "points",
-    "count",
-    "sum",
-    "avg",
-    "rate",
-  ];
-  const fieldNameLower = fieldInfo.name.toLowerCase();
-
-  if (measurePatterns.some((pattern) => fieldNameLower.includes(pattern))) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Calculate swimming relevance score for field names
- */
-function calculateSwimmingRelevance(fieldName, patterns) {
-  const nameLower = fieldName.toLowerCase();
-  let score = 0;
-
-  // Exact matches get highest score
-  if (patterns.includes(nameLower)) {
-    score += 10;
-  }
-
-  // Partial matches get medium score
-  patterns.forEach((pattern) => {
-    if (nameLower.includes(pattern) || pattern.includes(nameLower)) {
-      score += 5;
-    }
-  });
-
-  // Common swimming terms get bonus points
-  const swimmingTerms = [
-    "swim",
-    "pool",
-    "stroke",
-    "freestyle",
-    "backstroke",
-    "butterfly",
-    "breaststroke",
-    "medley",
-    "relay",
-  ];
-  swimmingTerms.forEach((term) => {
-    if (nameLower.includes(term)) {
-      score += 3;
-    }
-  });
-
-  return Math.min(score, 10); // Cap at 10
-}
-
-/**
- * Get suggested use case for a field
- */
-function getSuggestedUseCase(fieldName) {
-  const nameLower = fieldName.toLowerCase();
-
-  const useCases = {
-    name: "Athlete identification",
-    athlete: "Athlete identification",
-    swimmer: "Athlete identification",
-    team: "Team grouping",
-    club: "Team grouping",
-    event: "Event categorization",
-    race: "Event categorization",
-    time: "Performance measurement",
-    reaction_time: "Start analysis",
-    place: "Result ranking",
-    rank: "Result ranking",
-    heat: "Race organization",
-    lane: "Pool position",
-    distance: "Event specification",
-    stroke: "Swimming technique",
-    dq: "Disqualification tracking",
-  };
-
-  for (const [key, useCase] of Object.entries(useCases)) {
-    if (nameLower.includes(key)) {
-      return useCase;
-    }
-  }
-
-  return "General analysis";
 }

@@ -1,5 +1,5 @@
 /**
- * tableGenerator.js - Dynamic Table Builder Service
+ * tableGenerator.js - Dynamic Table Builder Service - FIXED VALIDATION
  *
  * Converts confirmed column mappings into Qlik hypercube definitions
  * and generates the structure for the final editable table.
@@ -37,13 +37,16 @@ export function generateHypercubeFromMappings(
         qlikField: fieldName,
         qlikFieldObj: qlikField,
         mapping: mapping,
-        type: qlikField.category || "field",
+        type: qlikField.category || qlikField.type || "field",
       };
 
       allColumns.push(columnDef);
 
       // Add to appropriate category
-      if (qlikField.category === "dimension") {
+      if (
+        qlikField.category === "dimension" ||
+        qlikField.type === "dimension"
+      ) {
         dimensions.push({
           qDef: {
             qFieldDefs: [fieldName],
@@ -55,7 +58,10 @@ export function generateHypercubeFromMappings(
             qSuppressOther: true,
           },
         });
-      } else if (qlikField.category === "measure") {
+      } else if (
+        qlikField.category === "measure" ||
+        qlikField.type === "measure"
+      ) {
         measures.push({
           qDef: {
             qDef: `Sum([${fieldName}])`, // Simple sum aggregation
@@ -146,7 +152,7 @@ export function generateTableStructure(hypercubeResult, parsedData) {
 }
 
 /**
- * Validate mappings before table generation
+ * Validate mappings before table generation - IMPROVED VALIDATION
  * @param {Object} mappings - Column mappings to validate
  * @returns {Object} - Validation result
  */
@@ -170,14 +176,57 @@ export function validateMappingsForTable(mappings) {
     return validation;
   }
 
-  // Analyze mapping types
+  // Check for duplicate Qlik fields FIRST (before counting types)
+  const usedFields = new Map(); // Map to track which file columns use which Qlik fields
+  const duplicates = [];
+
+  Object.entries(mappings).forEach(([fileCol, mapping]) => {
+    if (mapping.qlikField) {
+      const fieldName = mapping.qlikField.name;
+
+      if (usedFields.has(fieldName)) {
+        // This Qlik field is already used by another file column
+        const previousFileCol = usedFields.get(fieldName);
+        duplicates.push({
+          qlikField: fieldName,
+          fileColumns: [previousFileCol, fileCol],
+        });
+      } else {
+        usedFields.set(fieldName, fileCol);
+      }
+    }
+  });
+
+  // If duplicates found, create detailed error message
+  if (duplicates.length > 0) {
+    const duplicateFieldNames = duplicates.map((d) => d.qlikField);
+    validation.errors.push(
+      `Duplicate Qlik field mappings: ${duplicateFieldNames.join(", ")}`
+    );
+    validation.isValid = false;
+
+    // Add detailed information about which file columns are conflicting
+    duplicates.forEach((duplicate) => {
+      validation.errors.push(
+        `Qlik field "${
+          duplicate.qlikField
+        }" is mapped by multiple file columns: ${duplicate.fileColumns.join(
+          ", "
+        )}`
+      );
+    });
+
+    return validation; // Return early if duplicates found
+  }
+
+  // Analyze mapping types (only if no duplicates)
   Object.values(mappings).forEach((mapping) => {
     if (!mapping.qlikField) {
       validation.warnings.push(`Mapping missing Qlik field`);
       return;
     }
 
-    const category = mapping.qlikField.category;
+    const category = mapping.qlikField.category || mapping.qlikField.type;
     if (category === "dimension") {
       validation.summary.dimensionMappings++;
     } else if (category === "measure") {
@@ -201,27 +250,6 @@ export function validateMappingsForTable(mappings) {
     validation.warnings.push(
       "No measure fields mapped - consider adding measures for calculations"
     );
-  }
-
-  // Check for duplicate Qlik fields
-  const usedFields = new Set();
-  const duplicates = [];
-
-  Object.entries(mappings).forEach(([fileCol, mapping]) => {
-    if (mapping.qlikField) {
-      const fieldName = mapping.qlikField.name;
-      if (usedFields.has(fieldName)) {
-        duplicates.push(fieldName);
-      }
-      usedFields.add(fieldName);
-    }
-  });
-
-  if (duplicates.length > 0) {
-    validation.errors.push(
-      `Duplicate Qlik field mappings: ${duplicates.join(", ")}`
-    );
-    validation.isValid = false;
   }
 
   return validation;

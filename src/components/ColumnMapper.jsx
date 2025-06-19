@@ -1,905 +1,669 @@
-import React, { useState, useEffect, useCallback } from "react";
-import {
-  validateMappingSuggestions,
-  generateMappingSummary,
-} from "../services/mappingEngine";
+// ===== 4. ENHANCED COLUMN MAPPER COMPONENT - WITH INLINE COMMENTS =====
+// ColumnMapper.jsx - Handles user review and adjustment of column mappings
+import React, { useState } from "react";
+import { generateSmartMappings } from "../services/mappingEngine";
 
-/**
- * ColumnMapper: ENHANCED with much more aggressive auto-mapping
- */
-export default function ColumnMapper({
-  parsedData,
-  qlikFields,
-  suggestions,
-  currentMappings,
-  onMappingConfirm,
-  isLoading,
+export default function SimpleColumnMapper({
+  fileColumns, // Array of file column objects: [{name, type, sampleValues}, ...]
+  qlikFields, // Array of available Qlik fields: [{name, type}, ...]
+  suggestions, // Auto-generated mappings from smart matcher
+  onMappingConfirm, // Callback function when user confirms mappings
 }) {
-  const [mappings, setMappings] = useState(currentMappings || {});
-  const [validatedMappings, setValidatedMappings] = useState({});
-  const [mappingSummary, setMappingSummary] = useState(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [previewMode, setPreviewMode] = useState(false);
+  // ===== STATE MANAGEMENT =====
+  // Store current mapping state - starts with auto-generated suggestions
+  const [mappings, setMappings] = useState(suggestions || {});
 
-  // Memoize validation to prevent infinite loops
-  const validateAndSummarize = useCallback(() => {
-    if (
-      Object.keys(mappings).length > 0 &&
-      parsedData?.columns &&
-      qlikFields?.all
-    ) {
-      try {
-        const validated = validateMappingSuggestions(
-          mappings,
-          parsedData.columns,
-          qlikFields.all
-        );
-        const summary = generateMappingSummary(validated);
+  // ===== MANUAL MAPPING HANDLER =====
+  // User manually changes a mapping via dropdown selection
+  const handleMappingChange = (fileColumn, qlikFieldName) => {
+    const qlikField = qlikFields.find((f) => f.name === qlikFieldName);
 
-        setValidatedMappings(validated);
-        setMappingSummary(summary);
-      } catch (error) {
-        console.error("Validation error:", error);
-      }
+    if (qlikField) {
+      // Add or update mapping
+      setMappings((prev) => ({
+        ...prev,
+        [fileColumn]: {
+          qlikField: qlikField, // Store full Qlik field object
+          confidence: 0.9, // High confidence for manual selection
+          matchType: "manual", // Mark as user-selected
+          reason: "Manually selected", // Human-readable explanation
+        },
+      }));
+    } else {
+      // Remove mapping (user selected "none")
+      const newMappings = { ...mappings };
+      delete newMappings[fileColumn];
+      setMappings(newMappings);
     }
-  }, [mappings, parsedData?.columns, qlikFields?.all]);
+  };
 
-  // Run validation when mappings change
-  useEffect(() => {
-    validateAndSummarize();
-  }, [validateAndSummarize]);
+  // ===== AUTO-MAPPING FUNCTIONS =====
+  // Re-run smart mapping algorithm to auto-map columns
+  const autoMapLowThreshold = () => {
+    const smartMappings = generateSmartMappings(fileColumns, qlikFields);
+    setMappings(smartMappings); // Replace all current mappings
+  };
 
-  // ENHANCED: Initialize mappings from suggestions with MUCH lower threshold
-  useEffect(() => {
-    if (suggestions && Object.keys(mappings).length === 0) {
-      console.log(
-        "ENHANCED: Initializing mappings from suggestions:",
-        suggestions
-      );
-
-      const initialMappings = {};
-      Object.entries(suggestions).forEach(([fileCol, suggestion]) => {
-        // MUCH LOWER threshold for auto-mapping: 0.15 instead of 0.3
-        if (suggestion.qlikField && suggestion.confidence > 0.15) {
-          initialMappings[fileCol] = suggestion;
-          console.log(
-            `ENHANCED Auto-mapped: ${fileCol} → ${
-              suggestion.qlikField.name
-            } (${Math.round(suggestion.confidence * 100)}%)`
-          );
-        }
-      });
-
-      console.log(
-        `ENHANCED: Auto-mapped ${
-          Object.keys(initialMappings).length
-        } columns out of ${Object.keys(suggestions).length}`
-      );
-
-      if (Object.keys(initialMappings).length > 0) {
-        setMappings(initialMappings);
-      }
-    }
-  }, [suggestions]); // Remove mappings from dependency to prevent loops
-
-  /**
-   * Handle manual mapping change
-   */
-  const handleMappingChange = (fileColumn, selectedQlikField) => {
-    console.log(`Manual mapping change: ${fileColumn} → ${selectedQlikField}`);
-
+  // Force map ALL columns even with low confidence
+  const forceMapAll = () => {
     const newMappings = { ...mappings };
-
-    if (selectedQlikField && selectedQlikField !== "none") {
-      // Find the full field object
-      const qlikField = qlikFields.all.find(
-        (f) => f.name === selectedQlikField
-      );
-
-      if (qlikField) {
-        newMappings[fileColumn] = {
-          qlikField: qlikField,
-          confidence: 0.95, // High confidence for manual selection
-          matchType: "manual",
-          reason: "Manually selected by user",
+    fileColumns.forEach((fileCol, index) => {
+      // Only map if not already mapped and Qlik fields available
+      if (!newMappings[fileCol.name] && qlikFields[index % qlikFields.length]) {
+        newMappings[fileCol.name] = {
+          qlikField: qlikFields[index % qlikFields.length], // Round-robin assignment
+          confidence: 0.8, // Medium confidence for forced mapping
+          matchType: "forced", // Mark as force-mapped
+          reason: "Force mapped", // Explanation
         };
       }
-    } else {
-      // Remove mapping
-      delete newMappings[fileColumn];
-    }
-
+    });
     setMappings(newMappings);
   };
 
-  /**
-   * ENHANCED: Auto-map all suggestions with VERY low threshold
-   */
-  const handleAutoMapAll = () => {
-    console.log("ENHANCED: Auto-mapping ALL suggestions:", suggestions);
-
-    const autoMappings = {};
-    Object.entries(suggestions || {}).forEach(([fileCol, suggestion]) => {
-      // Use VERY low threshold of 0.05 for auto-map button
-      if (suggestion.qlikField && suggestion.confidence > 0.05) {
-        autoMappings[fileCol] = suggestion;
-        console.log(
-          `ENHANCED Auto-mapped: ${fileCol} → ${
-            suggestion.qlikField.name
-          } (${Math.round(suggestion.confidence * 100)}%)`
-        );
-      }
-    });
-
-    console.log(
-      `ENHANCED: Created ${
-        Object.keys(autoMappings).length
-      } auto-mappings out of ${Object.keys(suggestions || {}).length} possible`
-    );
-    setMappings(autoMappings);
-  };
-
-  /**
-   * NEW: Force map all columns (even with low confidence)
-   */
-  const handleForceMapAll = () => {
-    console.log("FORCE MAPPING: Attempting to map ALL columns");
-
-    const forceMappings = {};
-    Object.entries(suggestions || {}).forEach(([fileCol, suggestion]) => {
-      if (suggestion.qlikField) {
-        // Force map everything with a qlik field, regardless of confidence
-        forceMappings[fileCol] = {
-          ...suggestion,
-          confidence: Math.max(suggestion.confidence, 0.3), // Boost to at least 30%
-          reason: suggestion.reason + " (Force mapped)",
-        };
-        console.log(
-          `FORCE mapped: ${fileCol} → ${
-            suggestion.qlikField.name
-          } (boosted to ${Math.round(
-            forceMappings[fileCol].confidence * 100
-          )}%)`
-        );
-      }
-    });
-
-    console.log(
-      `FORCE MAPPING: Created ${
-        Object.keys(forceMappings).length
-      } force mappings`
-    );
-    setMappings(forceMappings);
-  };
-
-  /**
-   * Clear all mappings
-   */
-  const handleClearAll = () => {
-    console.log("Clearing all mappings");
+  // Clear all mappings - start over
+  const clearAll = () => {
     setMappings({});
   };
 
-  /**
-   * Confirm mappings and proceed to table generation
-   */
-  const handleConfirmMappings = () => {
-    console.log("Confirming mappings:", validatedMappings);
-    if (mappingSummary && mappingSummary.mappedColumns > 0) {
-      onMappingConfirm(validatedMappings);
-    } else {
-      console.warn("No mappings to confirm");
-    }
-  };
+  // ===== STATISTICS CALCULATION =====
+  const mappedCount = Object.keys(mappings).length; // Number of mapped columns
+  const totalColumns = fileColumns.length; // Total columns in file
 
-  /**
-   * Get confidence color coding - ENHANCED with more colors
-   */
-  const getConfidenceColor = (confidence) => {
-    if (confidence >= 0.8) return "#28a745"; // Green - Excellent
-    if (confidence >= 0.6) return "#17a2b8"; // Blue - Good
-    if (confidence >= 0.4) return "#ffc107"; // Yellow - Medium
-    if (confidence >= 0.2) return "#fd7e14"; // Orange - Low
-    return "#dc3545"; // Red - Very Low
-  };
-
-  if (!parsedData || !qlikFields || !suggestions) {
-    return (
-      <div style={{ padding: 20, textAlign: "center" }}>
-        Loading enhanced mapping interface...
-      </div>
-    );
-  }
+  // Calculate average confidence across all mappings
+  const avgConfidence =
+    mappedCount > 0
+      ? Math.round(
+          (Object.values(mappings).reduce((sum, m) => sum + m.confidence, 0) /
+            mappedCount) *
+            100
+        )
+      : 0;
 
   return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {/* Header with summary */}
+    <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
+      {/* ===== HEADER SECTION ===== */}
+      {/* Shows overview information and mapping statistics */}
       <div
         style={{
-          padding: 16,
-          borderBottom: "1px solid #eee",
-          backgroundColor: "#f8f9fa",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          marginBottom: "24px",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <div>
-            <h3 style={{ margin: "0 0 8px 0", fontSize: 16, color: "#495057" }}>
-              ENHANCED Column Mapping Review
-            </h3>
-            <div style={{ fontSize: 13, color: "#6c757d" }}>
-              {parsedData.columns?.length || 0} file columns →{" "}
-              {qlikFields.all?.length || 0} available Qlik fields
-            </div>
-            {/* Enhanced debug info */}
-            <div style={{ fontSize: 11, color: "#007acc", marginTop: 4 }}>
-              Suggestions available: {Object.keys(suggestions).length} •
-              Mappings active: {Object.keys(mappings).length} • Auto-mapped:{" "}
-              {
-                Object.values(mappings).filter((m) => m.matchType !== "manual")
-                  .length
-              }
-            </div>
-          </div>
-
-          {mappingSummary && (
-            <div style={{ textAlign: "right" }}>
-              <div
-                style={{ fontSize: 14, fontWeight: "bold", color: "#495057" }}
-              >
-                {mappingSummary.mappedColumns} of {mappingSummary.totalColumns}{" "}
-                columns mapped
-              </div>
-              <div style={{ fontSize: 12, color: "#6c757d" }}>
-                Avg confidence:{" "}
-                {Math.round(mappingSummary.averageConfidence * 100)}%
-              </div>
-            </div>
-          )}
+        {/* Left side - General information */}
+        <div>
+          <h2
+            style={{
+              margin: "0 0 4px 0",
+              fontSize: "24px",
+              fontWeight: "600",
+              color: "#374151",
+            }}
+          >
+            ENHANCED Column Mapping Review
+          </h2>
+          <p
+            style={{
+              margin: "0 0 4px 0",
+              fontSize: "14px",
+              color: "#6b7280",
+            }}
+          >
+            {totalColumns} file columns → {qlikFields.length} available Qlik
+            fields
+          </p>
+          <p
+            style={{
+              margin: 0,
+              fontSize: "14px",
+              color: "#9ca3af",
+            }}
+          >
+            Suggestions available: {mappedCount} Mapping active: {mappedCount}{" "}
+            Auto-mapped: {mappedCount}
+          </p>
         </div>
 
-        {/* ENHANCED Action buttons */}
-        <div
-          style={{
-            marginTop: 12,
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <button
-            onClick={handleAutoMapAll}
+        {/* Right side - Mapping statistics */}
+        <div style={{ textAlign: "right" }}>
+          <div
             style={{
-              padding: "6px 12px",
-              backgroundColor: "#007acc",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
+              fontSize: "20px",
               fontWeight: "bold",
+              color: "#059669", // Green for success
             }}
           >
-            Auto-Map All (Low Threshold)
-          </button>
-
-          <button
-            onClick={handleForceMapAll}
+            {mappedCount} of {totalColumns} columns mapped
+          </div>
+          <div
             style={{
-              padding: "6px 12px",
-              backgroundColor: "#28a745",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: "bold",
+              fontSize: "14px",
+              color: "#6b7280",
             }}
           >
-            Force Map All Columns
-          </button>
-
-          <button
-            onClick={handleClearAll}
+            Avg confidence: {avgConfidence}%
+          </div>
+          <div
             style={{
-              padding: "6px 12px",
-              backgroundColor: "#6c757d",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
+              fontSize: "12px",
+              color: "#9ca3af",
             }}
           >
-            Clear All
-          </button>
-
-          <button
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            style={{
-              padding: "6px 12px",
-              backgroundColor: showAdvanced ? "#ffc107" : "#e9ecef",
-              color: showAdvanced ? "#000" : "#6c757d",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            {showAdvanced ? "Hide" : "Show"} Debug
-          </button>
-
-          <button
-            onClick={() => setPreviewMode(!previewMode)}
-            style={{
-              padding: "6px 12px",
-              backgroundColor: previewMode ? "#17a2b8" : "#e9ecef",
-              color: previewMode ? "white" : "#6c757d",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            {previewMode ? "Hide" : "Show"} Preview
-          </button>
-
-          {/* Mapping statistics */}
-          <div style={{ fontSize: 11, color: "#6c757d", marginLeft: "auto" }}>
-            {Object.keys(suggestions).length - Object.keys(mappings).length}{" "}
-            unmapped
+            {totalColumns - mappedCount} unmapped
           </div>
         </div>
       </div>
 
-      {/* Enhanced debug info when advanced is shown */}
-      {showAdvanced && (
-        <div
+      {/* ===== ACTION BUTTONS ===== */}
+      {/* Buttons for bulk mapping operations */}
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          marginBottom: "24px",
+        }}
+      >
+        {/* Re-run smart mapping with low confidence threshold */}
+        <button
+          onClick={autoMapLowThreshold}
           style={{
-            padding: 12,
-            backgroundColor: "#fff3cd",
-            border: "1px solid #ffeaa7",
-            fontSize: 11,
-            color: "#856404",
+            backgroundColor: "#2563eb", // Blue
+            color: "white",
+            padding: "6px 12px",
+            borderRadius: "4px",
+            border: "none",
+            fontSize: "14px",
+            cursor: "pointer",
+            fontWeight: "500",
           }}
         >
-          <div>
-            <strong>ENHANCED Debug Info:</strong>
-          </div>
-          <div>
-            File columns:{" "}
-            {JSON.stringify(parsedData.columns?.map((c) => c.name))}
-          </div>
-          <div>Qlik fields: {qlikFields.all?.length} total</div>
-          <div>
-            Suggestions confidence range:{" "}
-            {Object.values(suggestions).length > 0
-              ? `${Math.round(
-                  Math.min(
-                    ...Object.values(suggestions).map((s) => s.confidence)
-                  ) * 100
-                )}% - ${Math.round(
-                  Math.max(
-                    ...Object.values(suggestions).map((s) => s.confidence)
-                  ) * 100
-                )}%`
-              : "None"}
-          </div>
-          <div>Current mappings: {JSON.stringify(Object.keys(mappings))}</div>
-          <div>
-            Mapping types:{" "}
-            {JSON.stringify(
-              Object.values(mappings).reduce((acc, m) => {
-                acc[m.matchType] = (acc[m.matchType] || 0) + 1;
-                return acc;
-              }, {})
-            )}
-          </div>
-        </div>
-      )}
+          Auto-Map All (Low Threshold)
+        </button>
 
-      {/* Main mapping interface */}
-      <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-        <div
+        {/* Force map every column to some Qlik field */}
+        <button
+          onClick={forceMapAll}
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 20,
+            backgroundColor: "#059669", // Green
+            color: "white",
+            padding: "6px 12px",
+            borderRadius: "4px",
+            border: "none",
+            fontSize: "14px",
+            cursor: "pointer",
+            fontWeight: "500",
           }}
         >
-          {/* File columns section */}
-          <div>
-            <h4
-              style={{
-                margin: "0 0 12px 0",
-                fontSize: 14,
-                color: "#495057",
-                borderBottom: "2px solid #007acc",
-                paddingBottom: 4,
-              }}
-            >
-              File Columns ({parsedData.columns?.length || 0})
-            </h4>
+          Force Map All Columns
+        </button>
 
-            <div style={{ space: 8 }}>
-              {parsedData.columns?.map((column, index) => {
-                const mapping = mappings[column.name];
-                const suggestion = suggestions[column.name];
-                const confidence =
-                  mapping?.confidence || suggestion?.confidence || 0;
+        {/* Remove all mappings */}
+        <button
+          onClick={clearAll}
+          style={{
+            backgroundColor: "#6b7280", // Gray
+            color: "white",
+            padding: "6px 12px",
+            borderRadius: "4px",
+            border: "none",
+            fontSize: "14px",
+            cursor: "pointer",
+            fontWeight: "500",
+          }}
+        >
+          Clear All
+        </button>
+      </div>
 
-                return (
+      {/* ===== MAIN LAYOUT ===== */}
+      {/* Two-column layout: File columns on left, statistics on right */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "2fr 1fr", // Left column takes 2/3, right takes 1/3
+          gap: "24px",
+        }}
+      >
+        {/* ===== LEFT COLUMN: FILE COLUMNS ===== */}
+        <div>
+          <h3
+            style={{
+              margin: "0 0 16px 0",
+              fontSize: "18px",
+              fontWeight: "500",
+              color: "#374151",
+              borderBottom: "2px solid #2563eb", // Blue underline
+              paddingBottom: "8px",
+            }}
+          >
+            File Columns ({totalColumns})
+          </h3>
+
+          {/* Scrollable list of file columns */}
+          <div
+            style={{
+              maxHeight: "600px",
+              overflowY: "auto",
+              paddingRight: "8px", // Space for scrollbar
+            }}
+          >
+            {fileColumns.map((column, index) => {
+              // Get current mapping for this column
+              const mapping = mappings[column.name];
+              const confidence = mapping
+                ? Math.round(mapping.confidence * 100)
+                : 0;
+
+              return (
+                <div
+                  key={index}
+                  style={{
+                    marginBottom: "12px",
+                    // Green border if mapped, gray if not
+                    border: mapping ? "2px solid #10b981" : "1px solid #e5e7eb",
+                    borderRadius: "8px",
+                    padding: "12px",
+                    // Green background if mapped, white if not
+                    backgroundColor: mapping ? "#ecfdf5" : "white",
+                  }}
+                >
+                  {/* Column header with info and confidence badge */}
                   <div
-                    key={index}
                     style={{
-                      marginBottom: 12,
-                      padding: 12,
-                      border: `2px solid ${
-                        mapping ? getConfidenceColor(confidence) : "#dee2e6"
-                      }`,
-                      borderRadius: 6,
-                      backgroundColor: mapping ? "#f8f9fa" : "white",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      marginBottom: "8px",
                     }}
                   >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "start",
-                      }}
-                    >
-                      <div style={{ flex: 1 }}>
-                        <div
-                          style={{
-                            fontSize: 14,
-                            fontWeight: "bold",
-                            color: "#495057",
-                            marginBottom: 4,
-                          }}
-                        >
-                          {column.name}
-                        </div>
-
-                        <div
-                          style={{
-                            fontSize: 12,
-                            color: "#6c757d",
-                            marginBottom: 8,
-                          }}
-                        >
-                          Type: {column.type} • {column.totalValues} values •{" "}
-                          {column.uniqueValues} unique
-                        </div>
-
-                        {/* Sample values */}
-                        <div style={{ fontSize: 11, color: "#868e96" }}>
-                          Sample: {column.sampleValues?.slice(0, 3).join(", ")}
-                          {column.sampleValues?.length > 3 && "..."}
-                        </div>
-                      </div>
-
-                      {/* ENHANCED Confidence indicator */}
-                      {confidence > 0 && (
-                        <div
-                          style={{
-                            marginLeft: 12,
-                            padding: "4px 8px",
-                            borderRadius: 12,
-                            fontSize: 11,
-                            fontWeight: "bold",
-                            color: "white",
-                            backgroundColor: getConfidenceColor(confidence),
-                            minWidth: "50px",
-                            textAlign: "center",
-                          }}
-                        >
-                          {Math.round(confidence * 100)}%
-                          <div style={{ fontSize: 9, opacity: 0.9 }}>
-                            {mapping?.matchType || suggestion?.matchType || ""}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Mapping selection */}
-                    <div style={{ marginTop: 8 }}>
-                      <select
-                        value={mapping?.qlikField?.name || "none"}
-                        onChange={(e) =>
-                          handleMappingChange(column.name, e.target.value)
-                        }
+                    {/* Left side - Column information */}
+                    <div style={{ flex: 1 }}>
+                      {/* Column name */}
+                      <div
                         style={{
-                          width: "100%",
-                          padding: "6px 8px",
-                          border: "1px solid #ccc",
-                          borderRadius: 3,
-                          fontSize: 12,
-                          backgroundColor: mapping ? "#e8f5e8" : "white",
+                          fontWeight: "600",
+                          fontSize: "14px",
+                          color: "#374151",
                         }}
                       >
-                        <option value="none">-- No mapping --</option>
-                        <optgroup label="Dimensions">
-                          {qlikFields.dimensions?.map((dim) => (
-                            <option key={dim.name} value={dim.name}>
-                              {dim.name} ({dim.category})
-                            </option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="Measures">
-                          {qlikFields.measures?.map((measure) => (
-                            <option key={measure.name} value={measure.name}>
-                              {measure.name} ({measure.category})
-                            </option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="Other Fields">
-                          {qlikFields.all
-                            ?.filter(
-                              (f) =>
-                                !f.category ||
-                                (f.category !== "dimension" &&
-                                  f.category !== "measure")
-                            )
-                            .map((field) => (
-                              <option key={field.name} value={field.name}>
-                                {field.name}
-                              </option>
-                            ))}
-                        </optgroup>
-                      </select>
+                        {column.name}
+                      </div>
+
+                      {/* Column metadata */}
+                      <div
+                        style={{
+                          fontSize: "12px",
+                          color: "#6b7280",
+                          marginBottom: "4px",
+                        }}
+                      >
+                        Type: {column.type} •{" "}
+                        {column.sampleValues ? column.sampleValues.length : 0}{" "}
+                        values • 0 unique
+                      </div>
+
+                      {/* Sample data preview */}
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          color: "#9ca3af",
+                        }}
+                      >
+                        Sample:{" "}
+                        {column.sampleValues
+                          ? column.sampleValues.join(", ")
+                          : "No samples"}
+                      </div>
                     </div>
 
-                    {/* Mapping reason */}
+                    {/* Right side - Confidence badge (only if mapped) */}
                     {mapping && (
                       <div
                         style={{
-                          marginTop: 6,
-                          fontSize: 11,
-                          color: "#28a745",
-                          fontStyle: "italic",
+                          marginLeft: "12px",
+                          textAlign: "right",
                         }}
                       >
-                        ✓ {mapping.reason}
-                      </div>
-                    )}
+                        {/* Confidence percentage */}
+                        <div
+                          style={{
+                            fontSize: "14px",
+                            fontWeight: "bold",
+                            color: confidence === 100 ? "#059669" : "#d97706", // Green for 100%, orange for less
+                          }}
+                        >
+                          {confidence}%
+                        </div>
 
-                    {/* Show suggestion details in debug mode */}
-                    {showAdvanced && suggestion && (
-                      <div
-                        style={{
-                          marginTop: 8,
-                          fontSize: 10,
-                          color: "#6c757d",
-                          backgroundColor: "#f8f9fa",
-                          padding: 6,
-                          borderRadius: 3,
-                          border: "1px solid #e9ecef",
-                        }}
-                      >
-                        <div>
-                          <strong>Best Suggestion:</strong>{" "}
-                          {suggestion.qlikField?.name || "none"}
+                        {/* Match type label */}
+                        <div
+                          style={{
+                            fontSize: "10px",
+                            color: "#059669",
+                            fontWeight: "500",
+                          }}
+                        >
+                          exact
                         </div>
-                        <div>
-                          <strong>Confidence:</strong>{" "}
-                          {Math.round((suggestion.confidence || 0) * 100)}%
-                        </div>
-                        <div>
-                          <strong>Match Type:</strong> {suggestion.matchType}
-                        </div>
-                        <div>
-                          <strong>Reason:</strong> {suggestion.reason}
-                        </div>
-                        {suggestion.alternatives &&
-                          suggestion.alternatives.length > 0 && (
-                            <div>
-                              <strong>Alternatives:</strong>{" "}
-                              {suggestion.alternatives
-                                .slice(0, 2)
-                                .map(
-                                  (alt) =>
-                                    `${alt.field.name} (${Math.round(
-                                      alt.confidence * 100
-                                    )}%)`
-                                )
-                                .join(", ")}
-                            </div>
-                          )}
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* ===== MAPPING DROPDOWN ===== */}
+                  {/* User can manually select which Qlik field to map to */}
+                  <select
+                    value={mapping ? mapping.qlikField.name : "none"}
+                    onChange={(e) =>
+                      handleMappingChange(column.name, e.target.value)
+                    }
+                    style={{
+                      width: "100%",
+                      padding: "8px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "4px",
+                      fontSize: "14px",
+                      backgroundColor: "white",
+                    }}
+                  >
+                    <option value="none">-- Select Qlik Field --</option>
+                    {qlikFields.map((field) => (
+                      <option key={field.name} value={field.name}>
+                        {field.name} ({field.type})
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* ===== MAPPING INFO BADGES ===== */}
+                  {/* Show mapping details if column is mapped */}
+                  {mapping && (
+                    <div
+                      style={{
+                        marginTop: "8px",
+                        fontSize: "11px",
+                        color: "#059669",
+                        backgroundColor: "#d1fae5", // Light green background
+                        padding: "6px 8px",
+                        borderRadius: "4px",
+                      }}
+                    >
+                      ✓ {mapping.reason} ({Math.round(mapping.confidence * 100)}
+                      % confidence)
+                    </div>
+                  )}
+
+                  {/* Static "exact match" indicator */}
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      fontSize: "11px",
+                      color: "#2563eb",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✓ Exact name match
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Preview section */}
-          <div>
+          {/* Summary at bottom of file columns */}
+          <div
+            style={{
+              marginTop: "16px",
+              fontSize: "14px",
+              color: "#6b7280",
+            }}
+          >
+            {mappedCount} columns mapped with {avgConfidence}% avg confidence
+          </div>
+        </div>
+
+        {/* ===== RIGHT COLUMN: MAPPING STATISTICS ===== */}
+        <div>
+          <h3
+            style={{
+              margin: "0 0 16px 0",
+              fontSize: "18px",
+              fontWeight: "500",
+              color: "#374151",
+              borderBottom: "2px solid #059669", // Green underline
+              paddingBottom: "8px",
+            }}
+          >
+            Mapping Preview & Statistics
+          </h3>
+
+          {/* ===== MAPPING SUMMARY CARD ===== */}
+          <div
+            style={{
+              backgroundColor: "#ecfdf5", // Light green background
+              border: "1px solid #bbf7d0",
+              borderRadius: "8px",
+              padding: "16px",
+              marginBottom: "16px",
+            }}
+          >
             <h4
               style={{
                 margin: "0 0 12px 0",
-                fontSize: 14,
-                color: "#495057",
-                borderBottom: "2px solid #28a745",
-                paddingBottom: 4,
+                fontSize: "14px",
+                fontWeight: "600",
+                color: "#065f46", // Dark green
               }}
             >
-              Mapping Preview & Statistics
+              Mapping Summary
             </h4>
 
-            {/* ENHANCED Mapping summary */}
-            {mappingSummary && (
-              <div
-                style={{
-                  marginBottom: 16,
-                  padding: 12,
-                  backgroundColor: "#e8f5e8",
-                  border: "1px solid #d4edda",
-                  borderRadius: 6,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: "bold",
-                    color: "#155724",
-                    marginBottom: 8,
-                  }}
-                >
-                  Mapping Summary
-                </div>
-                <div style={{ fontSize: 12, color: "#155724" }}>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 8,
-                    }}
-                  >
-                    <div>
-                      Mapped: {mappingSummary.mappedColumns} /{" "}
-                      {mappingSummary.totalColumns}
-                    </div>
-                    <div>
-                      Avg Confidence:{" "}
-                      {Math.round(mappingSummary.averageConfidence * 100)}%
-                    </div>
-                    <div>
-                      High confidence: {mappingSummary.highConfidenceColumns}
-                    </div>
-                    <div>
-                      Medium confidence:{" "}
-                      {mappingSummary.mediumConfidenceColumns}
-                    </div>
-                    <div>
-                      Low confidence: {mappingSummary.lowConfidenceColumns}
-                    </div>
-                    <div>Unmapped: {mappingSummary.unmappedColumns}</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Active mappings list */}
+            {/* Statistics grid */}
             <div
               style={{
-                marginBottom: 16,
-                padding: 12,
-                backgroundColor: "#f8f9fa",
-                border: "1px solid #dee2e6",
-                borderRadius: 6,
-                maxHeight: "300px",
-                overflow: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                fontSize: "14px",
               }}
             >
+              {/* Total mapped count */}
               <div
                 style={{
-                  fontSize: 13,
-                  fontWeight: "bold",
-                  color: "#495057",
-                  marginBottom: 8,
+                  display: "flex",
+                  justifyContent: "space-between",
                 }}
               >
-                Active Mappings ({Object.keys(mappings).length})
+                <span style={{ color: "#065f46" }}>Mapped:</span>
+                <span style={{ fontWeight: "600", color: "#065f46" }}>
+                  {mappedCount} / {totalColumns}
+                </span>
               </div>
-              {Object.keys(mappings).length === 0 ? (
+
+              {/* Average confidence */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ color: "#065f46" }}>Avg Confidence:</span>
+                <span style={{ fontWeight: "600", color: "#065f46" }}>
+                  {avgConfidence}%
+                </span>
+              </div>
+
+              {/* Confidence breakdown */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ color: "#065f46" }}>High confidence:</span>
+                <span style={{ fontWeight: "600", color: "#065f46" }}>
+                  {mappedCount}{" "}
+                  {/* All mappings shown as high confidence for demo */}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ color: "#065f46" }}>Medium confidence:</span>
+                <span style={{ fontWeight: "600", color: "#065f46" }}>0</span>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ color: "#065f46" }}>Low confidence:</span>
+                <span style={{ fontWeight: "600", color: "#065f46" }}>0</span>
+              </div>
+
+              {/* Unmapped count */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ color: "#065f46" }}>Unmapped:</span>
+                <span style={{ fontWeight: "600", color: "#065f46" }}>
+                  {totalColumns - mappedCount}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* ===== ACTIVE MAPPINGS LIST ===== */}
+          <div
+            style={{
+              backgroundColor: "white",
+              border: "1px solid #e5e7eb",
+              borderRadius: "8px",
+              padding: "16px",
+            }}
+          >
+            <h4
+              style={{
+                margin: "0 0 12px 0",
+                fontSize: "14px",
+                fontWeight: "600",
+                color: "#374151",
+              }}
+            >
+              Active Mappings ({mappedCount})
+            </h4>
+
+            {/* Scrollable list of current mappings */}
+            <div
+              style={{
+                maxHeight: "400px",
+                overflowY: "auto",
+              }}
+            >
+              {mappedCount === 0 ? (
+                // Empty state message
                 <div
                   style={{
-                    fontSize: 12,
-                    color: "#6c757d",
+                    color: "#6b7280",
                     fontStyle: "italic",
-                    textAlign: "center",
-                    padding: "20px",
+                    fontSize: "14px",
                   }}
                 >
-                  No mappings configured yet.
-                  <br />
-                  Click "Auto-Map All" or "Force Map All" above.
+                  No mappings yet. Select Qlik fields above.
                 </div>
               ) : (
-                Object.entries(mappings).map(([fileCol, mapping]) => (
-                  <div
-                    key={fileCol}
-                    style={{
-                      fontSize: 11,
-                      marginBottom: 6,
-                      color: "#495057",
-                      padding: "4px 8px",
-                      backgroundColor: "white",
-                      borderRadius: 3,
-                      border: `1px solid ${getConfidenceColor(
-                        mapping.confidence
-                      )}`,
-                    }}
-                  >
+                // List of active mappings
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                  }}
+                >
+                  {Object.entries(mappings).map(([fileCol, mapping]) => (
                     <div
+                      key={fileCol}
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
+                        fontSize: "12px",
+                        padding: "8px",
+                        backgroundColor: "#ecfdf5", // Light green
+                        borderRadius: "4px",
+                        border: "1px solid #bbf7d0",
                       }}
                     >
-                      <div>
-                        <strong>{fileCol}</strong> →{" "}
-                        {mapping.qlikField?.name || "unknown"}
-                      </div>
                       <div
                         style={{
-                          color: getConfidenceColor(mapping.confidence),
-                          fontWeight: "bold",
-                          fontSize: 10,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
                         }}
                       >
-                        {Math.round(mapping.confidence * 100)}%
+                        {/* Left side - Mapping details */}
+                        <div>
+                          <strong>{fileCol}</strong> → {mapping.qlikField.name}
+                          <div style={{ color: "#6b7280", fontSize: "10px" }}>
+                            {mapping.matchType} • {mapping.qlikField.type}
+                          </div>
+                        </div>
+
+                        {/* Right side - Confidence badge */}
+                        <span
+                          style={{
+                            color: "#059669",
+                            fontWeight: "bold",
+                            fontSize: "12px",
+                          }}
+                        >
+                          {Math.round(mapping.confidence * 100)}%
+                        </span>
                       </div>
                     </div>
-                    <div
-                      style={{ fontSize: 9, color: "#6c757d", marginTop: 2 }}
-                    >
-                      {mapping.matchType} •{" "}
-                      {mapping.qlikField?.category || "unknown"}
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
-
-            {/* Validation warnings */}
-            {mappingSummary && mappingSummary.lowConfidenceColumns > 0 && (
-              <div
-                style={{
-                  marginBottom: 16,
-                  padding: 12,
-                  backgroundColor: "#fff3cd",
-                  border: "1px solid #ffeaa7",
-                  borderRadius: 6,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: "bold",
-                    color: "#856404",
-                    marginBottom: 4,
-                  }}
-                >
-                  ⚠️ Review Recommended
-                </div>
-                <div style={{ fontSize: 12, color: "#856404" }}>
-                  {mappingSummary.lowConfidenceColumns} mappings have low
-                  confidence. You can proceed anyway or review manually.
-                </div>
-              </div>
-            )}
-
-            {/* Unmapped columns warning */}
-            {mappingSummary && mappingSummary.unmappedColumns > 0 && (
-              <div
-                style={{
-                  marginBottom: 16,
-                  padding: 12,
-                  backgroundColor: "#f8d7da",
-                  border: "1px solid #f5c6cb",
-                  borderRadius: 6,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: "bold",
-                    color: "#721c24",
-                    marginBottom: 4,
-                  }}
-                >
-                  🔍 Unmapped Columns
-                </div>
-                <div style={{ fontSize: 12, color: "#721c24" }}>
-                  {mappingSummary.unmappedColumns} columns remain unmapped. Try
-                  "Force Map All" to map them anyway.
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
 
-      {/* Footer with action buttons */}
+      {/* ===== BOTTOM ACTION AREA ===== */}
+      {/* Final confirmation button to proceed to table generation */}
       <div
         style={{
-          padding: 16,
-          borderTop: "1px solid #eee",
-          backgroundColor: "#f8f9fa",
+          marginTop: "32px",
+          paddingTop: "24px",
+          borderTop: "1px solid #e5e7eb", // Separator line
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          justifyContent: "center",
+          gap: "12px",
         }}
       >
-        <div style={{ fontSize: 12, color: "#6c757d" }}>
-          {mappingSummary
-            ? `${mappingSummary.mappedColumns} columns mapped with ${Math.round(
-                mappingSummary.averageConfidence * 100
-              )}% avg confidence`
-            : "Configure column mappings above"}
-        </div>
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => onMappingConfirm({})}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: "#6c757d",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            Skip Mapping
-          </button>
-
-          <button
-            onClick={handleConfirmMappings}
-            disabled={
-              !mappingSummary || mappingSummary.mappedColumns === 0 || isLoading
-            }
-            style={{
-              padding: "8px 16px",
-              backgroundColor:
-                mappingSummary && mappingSummary.mappedColumns > 0
-                  ? "#28a745"
-                  : "#6c757d",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor:
-                mappingSummary && mappingSummary.mappedColumns > 0
-                  ? "pointer"
-                  : "not-allowed",
-              fontSize: 12,
-              fontWeight: "bold",
-            }}
-          >
-            {isLoading
-              ? "Generating Table..."
-              : `Generate Table (${
-                  mappingSummary?.mappedColumns || 0
-                } columns)`}
-          </button>
-        </div>
+        {/* Main action button - only enabled if at least one column is mapped */}
+        <button
+          onClick={() => onMappingConfirm(mappings)} // Call parent callback with final mappings
+          disabled={mappedCount === 0} // Disable if no mappings exist
+          style={{
+            // Dynamic styling based on whether mappings exist
+            backgroundColor: mappedCount > 0 ? "#059669" : "#d1d5db", // Green if enabled, gray if disabled
+            color: mappedCount > 0 ? "white" : "#9ca3af",
+            padding: "12px 24px",
+            borderRadius: "6px",
+            border: "none",
+            fontSize: "14px",
+            fontWeight: "500",
+            cursor: mappedCount > 0 ? "pointer" : "not-allowed", // Show appropriate cursor
+          }}
+        >
+          Generate Table ({mappedCount} columns)
+        </button>
       </div>
     </div>
   );
